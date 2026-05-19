@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Model weights / checkpoints (too large for git)
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+
+# Runtime data
+uploads/
+outputs/
+*.mp4
+*.mov
+*.avi
+*.mkv
+logs/
+*.log
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Profile store
+profiles/
+*.profile.json

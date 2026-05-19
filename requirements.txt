@@ -1,0 +1,18 @@
+fastapi
+uvicorn[standard]
+python-multipart
+openai
+insightface
+onnxruntime
+scikit-learn
+opencv-contrib-python==4.10.0.84
+numpy<2
+Pillow
+pydantic-settings
+torch
+torchvision
+
+# SAM3 (Meta facebookresearch/sam3) — pip으로 설치 불가, 별도 설치 필요:
+# git clone https://github.com/facebookresearch/sam3.git ~/sam3_repo
+# cd ~/sam3_repo && pip install -e .
+# pip install "setuptools<81" "numpy<2" psutil pycocotools einops scipy hydra-core decord

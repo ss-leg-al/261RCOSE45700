@@ -1,0 +1,52 @@
+"""Apply SAM3 polygon masks and fallback bbox blurs."""
+from __future__ import annotations
+
+import cv2
+import numpy as np
+
+
+def apply_polygon_mask(img: np.ndarray, polygon, strategy: str) -> np.ndarray:
+    """Apply blur/blackbox/pixelate within a SAM3 polygon mask."""
+    if polygon is None or len(polygon) < 3:
+        return img
+    pts = np.array(polygon, dtype=np.int32).reshape(-1, 2)
+    h, w = img.shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.fillPoly(mask, [pts], 255)
+    region = mask == 255
+    if not region.any():
+        return img
+
+    if strategy == "blur":
+        blurred = cv2.GaussianBlur(img, (51, 51), 15)
+        img[region] = blurred[region]
+    elif strategy == "blackbox":
+        img[region] = 0
+    elif strategy == "pixelate":
+        ys, xs = np.where(region)
+        y1, y2 = int(ys.min()), int(ys.max()) + 1
+        x1, x2 = int(xs.min()), int(xs.max()) + 1
+        roi = img[y1:y2, x1:x2]
+        if roi.size == 0:
+            return img
+        rh, rw = roi.shape[:2]
+        block = max(2, min(rw, rh) // 12 or 2)
+        small = cv2.resize(roi, (max(1, rw // block), max(1, rh // block)))
+        pix = cv2.resize(small, (rw, rh), interpolation=cv2.INTER_NEAREST)
+        sub = mask[y1:y2, x1:x2] == 255
+        roi[sub] = pix[sub]
+        img[y1:y2, x1:x2] = roi
+    return img
+
+
+def blur_bbox(img: np.ndarray, bbox_xyxy: list[float], strength: int = 51) -> np.ndarray:
+    """Fallback rectangular blur when SAM3 polygon is unavailable."""
+    x1, y1, x2, y2 = (int(v) for v in bbox_xyxy)
+    h, w = img.shape[:2]
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(w, x2), min(h, y2)
+    if x2 <= x1 or y2 <= y1:
+        return img
+    k = strength | 1
+    img[y1:y2, x1:x2] = cv2.GaussianBlur(img[y1:y2, x1:x2], (k, k), 0)
+    return img
