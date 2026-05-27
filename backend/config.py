@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     SAMPLE_FPS: int = 1
     MAX_VIDEO_SIZE_MB: int = 500
-    FACE_DETECT_INTERVAL: int = 10   # Phase 1: run InsightFace every N sampled frames
+    FACE_DETECT_INTERVAL: int = 1    # Phase 1: run InsightFace every N sampled frames
     SCENE_ANALYSIS_FRAMES: int = 5   # number of frames to sample for GPT-4o scene analysis
     FACE_SIMILARITY_THRESHOLD: float = 0.55
     SAM3_CONFIDENCE_THRESHOLD: float = 0.3

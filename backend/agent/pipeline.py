@@ -82,8 +82,8 @@ def run_detection_phase(job_id: str) -> None:
 
         # 3. SAM3 detect PII on 5 evenly-spaced frames (face + non-face)
         # sam3_detections: list of (frame_path, detection_dict)
-        sam3_detections: list[dict] = []          # face detections for Phase 1 thumbnail matching
-        sam3_frame_detections: list[tuple] = []   # (frame_path, obj) for all detections
+        sam3_detections: list[tuple[int, dict]] = []  # (frame_idx, face_obj) for thumbnail matching
+        sam3_frame_detections: list[tuple] = []       # (frame_path, obj) for all detections
         if sam3_available() and expected_pii:
             n_samples = min(5, len(frames))
             sample_indices = [int(len(frames) * i / n_samples) for i in range(n_samples)]
@@ -97,7 +97,7 @@ def run_detection_phase(job_id: str) -> None:
                 for obj in detections:
                     sam3_frame_detections.append((frames[si], obj))
                     if obj["type"] == "face":
-                        sam3_detections.append(obj)
+                        sam3_detections.append((si, obj))
                 total_detected += len(detections)
             emit_log(job_id, {
                 "step": "sam3",
@@ -176,7 +176,7 @@ def run_detection_phase(job_id: str) -> None:
                     thumb_name = f"face_{label}.jpg"
                     if img is not None:
                         # Try to use SAM3 polygon crop for higher quality thumbnail
-                        sam3_face = _find_sam3_face(bbox_xyxy, sam3_detections, frame_idx, frames)
+                        sam3_face = _find_sam3_face(bbox_xyxy, sam3_detections, frame_idx)
                         if sam3_face and sam3_face.get("polygon"):
                             # Crop from polygon bounding box
                             x1, y1, x2, y2 = sam3_face["bbox_xyxy"]
@@ -273,16 +273,17 @@ def _find_borderline_clusters(
 
 def _find_sam3_face(
     insightface_bbox: list[float],
-    sam3_detections: list[dict],
-    frame_idx: int,
-    frames: list[Path],
+    sam3_detections: list[tuple[int, dict]],
+    target_frame_idx: int,
 ) -> dict | None:
-    """Find the SAM3 face detection that best overlaps with an InsightFace bbox."""
-    if frame_idx != 0:
-        return None
+    """Find the SAM3 face detection that best overlaps with an InsightFace bbox.
+
+    sam3_detections is a list of (frame_idx, obj) so we can match only
+    detections from the same frame as the InsightFace best-score detection.
+    """
     best_iou, best = 0.0, None
-    for obj in sam3_detections:
-        if obj["type"] != "face":
+    for frame_idx, obj in sam3_detections:
+        if frame_idx != target_frame_idx:
             continue
         iou = bbox_iou(insightface_bbox, obj["bbox_xyxy"])
         if iou > best_iou:
@@ -319,10 +320,11 @@ def run_masking_phase(job_id: str) -> None:
             pii_types_to_detect.append("face")
         pii_types_to_detect += store.masked_pii_types
 
-        # Cache last-known detection per PII type for temporal propagation
-        # If SAM3 misses a frame, the cached polygon is reused for up to PII_CACHE_TTL frames
+        # Cache last-known polygon per cluster_id / pii_type for temporal propagation.
+        # If SAM3 misses a frame the cached polygon is reused for up to PII_CACHE_TTL frames.
         PII_CACHE_TTL = 30
-        pii_cache: dict[str, dict] = {}  # pii_type → {polygon, mask_strategy, last_seen}
+        face_cache: dict[int, dict] = {}  # cluster_id → {polygon, last_seen}
+        pii_cache: dict[str, dict] = {}   # pii_type   → {polygon, mask_strategy, last_seen}
 
         for idx, fp in enumerate(frames):
             img = cv2.imread(str(fp))
@@ -341,40 +343,55 @@ def run_masking_phase(job_id: str) -> None:
             # — Face masking —
             # Strategy: SAM3 polygon (high quality) + InsightFace identity check
             face_objs = [o for o in sam3_objs if o["type"] == "face"]
-            if face_objs and "face" in store.expected_pii:
-                # Run InsightFace on the full frame once so detection is reliable
-                full_faces = detect_faces(str(fp))
-                for obj in face_objs:
-                    # Match SAM3 bbox to the InsightFace detection with highest IoU
-                    best_iou, best_emb = 0.0, None
-                    for f in full_faces:
-                        iou = bbox_iou(obj["bbox_xyxy"], f["bbox_xyxy"])
-                        if iou > best_iou:
-                            best_iou, best_emb = iou, f["embedding"]
-                    emb = best_emb if best_iou > 0.3 else None
+            if "face" in store.expected_pii:
+                masked_cids: set[int] = set()
 
-                    if emb is not None:
+                if face_objs:
+                    full_faces = detect_faces(str(fp))
+                    for obj in face_objs:
+                        best_iou, best_emb = 0.0, None
+                        for f in full_faces:
+                            iou = bbox_iou(obj["bbox_xyxy"], f["bbox_xyxy"])
+                            if iou > best_iou:
+                                best_iou, best_emb = iou, f["embedding"]
+                        emb = best_emb if best_iou > 0.3 else None
+
+                        cid = (
+                            find_best_cluster(emb, store.cluster_embeddings, settings.FACE_SIMILARITY_THRESHOLD)
+                            if emb is not None else None
+                        )
+
+                        # Update face cache for every identified face (protected or not)
+                        if cid is not None and obj["polygon"] is not None:
+                            face_cache[cid] = {"polygon": obj["polygon"], "last_seen": idx}
+
+                        if cid is None or cid not in store.protected_face_cluster_ids:
+                            img = apply_polygon_mask(img, obj["polygon"], "blur")
+                            total_faces += 1
+                            if cid is not None:
+                                masked_cids.add(cid)
+                elif sam3_available():
+                    pass  # SAM3 available but detected no faces this frame — use cache below
+                else:
+                    # SAM3 not available → InsightFace bbox fallback (no cache)
+                    for face in detect_faces(str(fp)):
                         cid = find_best_cluster(
-                            emb,
+                            face["embedding"],
                             store.cluster_embeddings,
                             settings.FACE_SIMILARITY_THRESHOLD,
                         )
-                    else:
-                        cid = None
+                        if cid is None or cid not in store.protected_face_cluster_ids:
+                            img = blur_bbox(img, face["bbox_xyxy"])
+                            total_faces += 1
 
-                    if cid is None or cid not in store.protected_face_cluster_ids:
-                        img = apply_polygon_mask(img, obj["polygon"], "blur")
-                        total_faces += 1
-            elif "face" in store.expected_pii:
-                # SAM3 not available → InsightFace bbox fallback
-                for face in detect_faces(str(fp)):
-                    cid = find_best_cluster(
-                        face["embedding"],
-                        store.cluster_embeddings,
-                        settings.FACE_SIMILARITY_THRESHOLD,
-                    )
-                    if cid is None or cid not in store.protected_face_cluster_ids:
-                        img = blur_bbox(img, face["bbox_xyxy"])
+                # TTL fallback: reuse cached polygon for faces SAM3 missed this frame
+                for cid, cached in face_cache.items():
+                    if cid in masked_cids:
+                        continue  # already masked this frame
+                    if cid in store.protected_face_cluster_ids:
+                        continue  # protected, never mask
+                    if (idx - cached["last_seen"]) <= PII_CACHE_TTL:
+                        img = apply_polygon_mask(img, cached["polygon"], "blur")
                         total_faces += 1
 
             # — Non-face PII masking —
