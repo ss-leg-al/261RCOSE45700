@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 
 const PII_LABEL = {
-  document: "문서", screen: "화면", nameplate: "명패", id_card: "신분증",
+  document: "문서", screen: "화면", nameplate: "명패", id_card: "신분증", license_plate: "번호판",
 };
 const SCENE_LABEL = {
-  meeting: "회의", lecture: "강의", interview: "인터뷰", public: "공공장소", other: "기타",
+  meeting: "회의", lecture: "강의", interview: "인터뷰", public: "공공장소", vehicle: "자동차/도로", other: "기타",
 };
 
 const TABS = ["비교", "보고서"];
@@ -161,7 +161,7 @@ export default function DoneView({ jobId, onNewJob }) {
 
       {/* Content */}
       <div className="flex-1 min-h-0 overflow-auto">
-        {tab === "비교" && <CompareTab jobId={jobId} skipped={report?.skipped} />}
+        {tab === "비교" && <CompareTab jobId={jobId} report={report} />}
         {tab === "보고서" && <ReportTab report={report} />}
       </div>
     </div>
@@ -169,7 +169,8 @@ export default function DoneView({ jobId, onNewJob }) {
 }
 
 /* ── 비교 탭: 원본 vs 결과 나란히 ─────────────────────────────── */
-function CompareTab({ jobId, skipped }) {
+function CompareTab({ jobId, report }) {
+  const skipped = report?.skipped;
   return (
     <div className="flex flex-col gap-4 p-8 h-full">
       {skipped && (
@@ -184,9 +185,42 @@ function CompareTab({ jobId, skipped }) {
       <div className="flex gap-5 flex-1 min-h-0">
         <VideoPane label="원본" src={api.originalUrl(jobId)} badge="ORIGINAL" badgeColor="#5858a0" />
         {!skipped && (
-          <VideoPane label="처리 결과" src={api.downloadUrl(jobId)} badge="PROCESSED" badgeColor="#10b981" glow />
+          <VideoPane
+            label={report?.debug_mask_overlay_enabled ? "디버그 컬러 마스크 결과" : "마스킹 결과"}
+            src={api.downloadUrl(jobId)}
+            badge={report?.debug_mask_overlay_enabled ? "DEBUG MASK" : "MASKED"}
+            badgeColor="#10b981"
+            glow
+          />
         )}
       </div>
+      {!skipped && <MaskLegend report={report} />}
+    </div>
+  );
+}
+
+function MaskLegend({ report }) {
+  if (!report?.colored_mask_enabled || !report?.mask_colors) {
+    return null;
+  }
+  return (
+    <div
+      className="rounded-xl px-4 py-3 text-xs flex flex-wrap items-center gap-3 flex-shrink-0"
+      style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.22)", color: "var(--muted)" }}
+    >
+      <span className="font-semibold" style={{ color: "#10b981" }}>디버그 컬러 마스크</span>
+      {Object.entries(report.mask_colors).map(([type, color]) => (
+        <span key={type} className="flex items-center gap-1.5">
+          <span
+            className="w-2.5 h-2.5 rounded-full"
+            style={{ background: color, boxShadow: `0 0 8px ${color}` }}
+          />
+          {type === "face" ? "얼굴" : (PII_LABEL[type] ?? type)}
+        </span>
+      ))}
+      <span style={{ color: "rgba(221,221,245,0.55)" }}>
+        테스트 확인용으로 실제 마스킹 위에 색상을 덧입혔습니다.
+      </span>
     </div>
   );
 }
@@ -240,6 +274,8 @@ function ReportTab({ report }) {
   const maskedPiiTypes = (report.masked_pii_types ?? []).map((t) => PII_LABEL[t] ?? t);
   const totalPeople    = report.total_people_detected ?? 0;
   const blurredPeople  = totalPeople - protectedCount;
+  const selectedPiiCategoryCount = report.selected_pii_category_count ?? maskedPiiTypes.length;
+  const totalPiiCandidateCount = report.total_pii_candidates_detected ?? 0;
 
   const cards = isSkipped ? [
     {
@@ -284,6 +320,18 @@ function ReportTab({ report }) {
       value: (report.expected_pii ?? []).map((t) => PII_LABEL[t] ?? t).join(", ") || "없음",
       sub: "AI 사전 예측 항목",
       color: "#06b6d4",
+    },
+    {
+      label: "선택된 PII 카테고리",
+      value: `${selectedPiiCategoryCount}종`,
+      sub: `후보 예시 ${totalPiiCandidateCount}개 기준`,
+      color: "#f97316",
+    },
+    {
+      label: "디버그 컬러 오버레이",
+      value: report.debug_mask_overlay_enabled ? "적용됨" : "미적용",
+      sub: "테스트용 변경 영역 표시",
+      color: "#10b981",
     },
   ];
 

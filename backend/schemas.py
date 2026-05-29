@@ -29,6 +29,7 @@ class PIICandidateItem(BaseModel):
     pii_type: str
     thumbnail_url: str
     confidence: float
+    frame_index: int | None = None
 
 
 class CandidatesResponse(BaseModel):

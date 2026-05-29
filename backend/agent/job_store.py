@@ -9,14 +9,19 @@ class FaceCluster:
     cluster_id: int
     thumbnail: str   # filename under uploads/{job_id}/thumbnails/
     count: int       # number of detections in this cluster
+    frame_index: int | None = None
+    bbox_xyxy: list[float] | None = None
 
 
 @dataclass
 class PIICandidate:
     object_id: int
-    pii_type: str    # document | screen | nameplate | id_card
+    pii_type: str    # document | screen | nameplate | id_card | license_plate
     thumbnail: str   # filename under uploads/{job_id}/thumbnails/
     confidence: float
+    frame_index: int | None = None
+    bbox_xyxy: list[float] | None = None
+    mask_strategy: str | None = None
 
 
 @dataclass

@@ -119,6 +119,7 @@ def get_candidates(job_id: str):
                 "pii_type":      p.pii_type,
                 "thumbnail_url": f"/thumbnails/{job_id}/thumbnails/{p.thumbnail}",
                 "confidence":    p.confidence,
+                "frame_index":   p.frame_index,
             }
             for p in store.pii_candidates
         ],
@@ -145,6 +146,9 @@ def skip_job(job_id: str):
         "total_people_detected": len(store.face_clusters),
         "total_faces_blurred":   0,
         "total_pii_masked":      0,
+        "masked_pii_types":      [],
+        "colored_mask_enabled":  False,
+        "debug_mask_overlay_enabled": False,
     }
     store.status = "done"
     write_status(job_id, "done")
@@ -161,7 +165,9 @@ def submit_selection(
     if store.status != "awaiting_selection":
         raise HTTPException(400, f"현재 상태({store.status})에서는 선택할 수 없습니다")
     store.protected_face_cluster_ids = body.protected_face_cluster_ids
-    store.masked_pii_types = body.masked_pii_types
+    # Non-face PII selection is category/type-level. Candidate thumbnails are
+    # examples for review, not stable object identities across video frames.
+    store.masked_pii_types = list(dict.fromkeys(body.masked_pii_types))
     background_tasks.add_task(run_masking_phase, job_id)
     return {"message": "마스킹을 시작합니다"}
 

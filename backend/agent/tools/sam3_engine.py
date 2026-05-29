@@ -36,6 +36,11 @@ _TEXT_PROMPTS = {
         "driver license",
         "passport",
     ),
+    "license_plate": (
+        "license plate",
+        "vehicle registration plate",
+        "car number plate",
+    ),
 }
 
 _DEDUP_IOU_THRESHOLD = 0.5
@@ -46,6 +51,7 @@ MASK_STRATEGY = {
     "screen":    "pixelate",
     "nameplate": "blackbox",
     "id_card":   "blackbox",
+    "license_plate": "blackbox",
 }
 
 

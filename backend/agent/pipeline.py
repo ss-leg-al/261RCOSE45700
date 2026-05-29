@@ -29,6 +29,15 @@ from .tools.video_tools import compose_video, extract_frames, get_video_fps
 from ..config import settings
 from ..models.sam3_loader import is_available as sam3_available
 
+MASK_COLOR_HEX = {
+    "face":          "#a855f7",
+    "document":      "#f59e0b",
+    "screen":        "#06b6d4",
+    "nameplate":     "#ef4444",
+    "id_card":       "#10b981",
+    "license_plate": "#f97316",
+}
+
 
 # ---------------------------------------------------------------------------
 # Phase 1 — Detection & clustering
@@ -46,7 +55,10 @@ def run_detection_phase(job_id: str) -> None:
         frames_dir = settings.upload_path / job_id / "frames"
         frames = extract_frames(store.video_path, frames_dir)
         store.frames_dir = str(frames_dir)
-        emit_log(job_id, {"step": "extract", "message": f"{len(frames)}개 프레임 추출 완료 (원본 {native_fps:.2f}fps)"})
+        emit_log(job_id, {
+            "step": "extract",
+            "message": f"{len(frames)}개 프레임 추출 완료 (원본 {native_fps:.2f}fps)",
+        })
 
         # 2. Analyze scene (GPT-4o) — evenly-sampled multi-frame
         n = min(settings.SCENE_ANALYSIS_FRAMES, len(frames))
@@ -83,7 +95,7 @@ def run_detection_phase(job_id: str) -> None:
         # 3. SAM3 detect PII on 5 evenly-spaced frames (face + non-face)
         # sam3_detections: list of (frame_path, detection_dict)
         sam3_detections: list[tuple[int, dict]] = []  # (frame_idx, face_obj) for thumbnail matching
-        sam3_frame_detections: list[tuple] = []       # (frame_path, obj) for all detections
+        sam3_frame_detections: list[tuple] = []       # (frame_idx, frame_path, obj) for all detections
         if sam3_available() and expected_pii:
             n_samples = min(5, len(frames))
             sample_indices = [int(len(frames) * i / n_samples) for i in range(n_samples)]
@@ -95,7 +107,7 @@ def run_detection_phase(job_id: str) -> None:
                     settings.SAM3_CONFIDENCE_THRESHOLD,
                 )
                 for obj in detections:
-                    sam3_frame_detections.append((frames[si], obj))
+                    sam3_frame_detections.append((si, frames[si], obj))
                     if obj["type"] == "face":
                         sam3_detections.append((si, obj))
                 total_detected += len(detections)
@@ -104,29 +116,27 @@ def run_detection_phase(job_id: str) -> None:
                 "message": f"SAM3 탐지 완료: {n_samples}개 샘플 프레임, {total_detected}개 객체",
             })
 
-            # Save best thumbnail per PII type (highest confidence across sampled frames)
-            best_per_type: dict[str, tuple] = {}  # type → (frame_path, obj)
-            for frame_path, obj in sam3_frame_detections:
+            # Save example thumbnails for each non-face PII category.  Full
+            # video masking is category/type-level, not per-object: SAM3 image
+            # detection does not provide stable object IDs across frames.
+            pii_candidates: list[PIICandidate] = []
+            for frame_idx, frame_path, obj in sam3_frame_detections:
                 if obj["type"] == "face":
                     continue
-                t = obj["type"]
-                if t not in best_per_type or obj["confidence"] > best_per_type[t][1]["confidence"]:
-                    best_per_type[t] = (frame_path, obj)
-
-            pii_candidates: list[PIICandidate] = []
-            for pii_type, (frame_path, obj) in best_per_type.items():
-                x1, y1, x2, y2 = obj["bbox_xyxy"]
-                img = cv2.imread(str(frame_path))
-                if img is not None:
-                    crop = img[max(0, y1):y2, max(0, x1):x2]
-                    thumb_name = f"pii_{len(pii_candidates)}.jpg"
-                    cv2.imwrite(str(thumb_dir / thumb_name), crop)
-                    pii_candidates.append(PIICandidate(
-                        object_id=len(pii_candidates),
-                        pii_type=pii_type,
-                        thumbnail=thumb_name,
-                        confidence=obj["confidence"],
-                    ))
+                pii_type = obj["type"]
+                object_id = len(pii_candidates)
+                thumb_name = f"pii_{object_id}_{pii_type}.jpg"
+                if not _save_pii_context_thumbnail(frame_path, obj, thumb_dir / thumb_name):
+                    continue
+                pii_candidates.append(PIICandidate(
+                    object_id=object_id,
+                    pii_type=pii_type,
+                    thumbnail=thumb_name,
+                    confidence=obj["confidence"],
+                    frame_index=frame_idx,
+                    bbox_xyxy=[float(v) for v in obj["bbox_xyxy"]],
+                    mask_strategy=obj.get("mask_strategy"),
+                ))
             store.pii_candidates = pii_candidates
             emit_log(job_id, {
                 "step": "pii",
@@ -195,6 +205,8 @@ def run_detection_phase(job_id: str) -> None:
                         cluster_id=label,
                         thumbnail=thumb_name,
                         count=len(records),
+                        frame_index=frame_idx,
+                        bbox_xyxy=[float(v) for v in bbox_xyxy],
                     ))
 
         store.face_clusters = face_clusters
@@ -222,7 +234,7 @@ def run_detection_phase(job_id: str) -> None:
         if borderline:
             emit_log(job_id, {
                 "step": "guideline",
-                "message": f"경계값 클러스터 {len(borderline)}쌍 감지됨",
+                "message": f"경계값 얼굴 클러스터 {len(borderline)}쌍 감지됨",
             })
 
         store.guideline = guideline
@@ -240,6 +252,104 @@ def run_detection_phase(job_id: str) -> None:
         store.error = str(exc)
         write_status(job_id, "failed", str(exc))
         emit_log(job_id, {"step": "error", "message": str(exc)})
+
+
+def _save_pii_context_thumbnail(frame_path: Path, obj: dict, out_path: Path) -> bool:
+    """Save a zoomed-in PII thumbnail with only a red outline on the target.
+
+    The review UI should not show the whole frame, but a focused crop around the
+    detected object.  Keep a small amount of nearby background for orientation
+    and draw the exact SAM polygon (or bbox fallback) in red.
+    """
+    img = cv2.imread(str(frame_path))
+    if img is None:
+        return False
+
+    img_h, img_w = img.shape[:2]
+    bbox = _clamp_bbox(obj.get("bbox_xyxy", []), img_w, img_h)
+    if bbox is None:
+        return False
+    x1, y1, x2, y2 = bbox
+
+    left, top, right, bottom = _focused_crop_bounds(bbox, img_w, img_h)
+    crop = img[top:bottom, left:right].copy()
+    if crop.size == 0:
+        return False
+
+    thumb_w, thumb_h = 320, 200
+    scale_x = thumb_w / max(1, right - left)
+    scale_y = thumb_h / max(1, bottom - top)
+    thumb = cv2.resize(crop, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
+
+    polygon = obj.get("polygon")
+    if polygon and len(polygon) >= 3:
+        pts = np.array([
+            [
+                [
+                    int(np.clip((point[0] - left) * scale_x, 0, thumb_w - 1)),
+                    int(np.clip((point[1] - top) * scale_y, 0, thumb_h - 1)),
+                ]
+                for point in polygon
+            ]
+        ], dtype=np.int32)
+        cv2.polylines(thumb, pts, isClosed=True, color=(0, 0, 255), thickness=4, lineType=cv2.LINE_AA)
+    else:
+        pt1 = (
+            int(np.clip((x1 - left) * scale_x, 0, thumb_w - 1)),
+            int(np.clip((y1 - top) * scale_y, 0, thumb_h - 1)),
+        )
+        pt2 = (
+            int(np.clip((x2 - left) * scale_x, 0, thumb_w - 1)),
+            int(np.clip((y2 - top) * scale_y, 0, thumb_h - 1)),
+        )
+        cv2.rectangle(thumb, pt1, pt2, color=(0, 0, 255), thickness=4, lineType=cv2.LINE_AA)
+
+    return bool(cv2.imwrite(str(out_path), thumb))
+
+
+def _clamp_bbox(bbox_xyxy: list | tuple, img_w: int, img_h: int) -> tuple[int, int, int, int] | None:
+    if len(bbox_xyxy) != 4:
+        return None
+    x1, y1, x2, y2 = (int(round(float(v))) for v in bbox_xyxy)
+    x1 = int(np.clip(x1, 0, img_w - 1))
+    y1 = int(np.clip(y1, 0, img_h - 1))
+    x2 = int(np.clip(x2, x1 + 1, img_w))
+    y2 = int(np.clip(y2, y1 + 1, img_h))
+    return x1, y1, x2, y2
+
+
+def _focused_crop_bounds(
+    bbox: tuple[int, int, int, int],
+    img_w: int,
+    img_h: int,
+    target_aspect: float = 1.6,
+) -> tuple[int, int, int, int]:
+    x1, y1, x2, y2 = bbox
+    box_w = max(1, x2 - x1)
+    box_h = max(1, y2 - y1)
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2
+
+    # Tight enough to enlarge the target area, but not so tight that the red
+    # outline loses nearby cues.  The aspect correction below preserves the
+    # review-card thumbnail ratio.
+    crop_w = max(box_w * 2.2, 120.0)
+    crop_h = max(box_h * 2.2, 75.0)
+    if crop_w / crop_h < target_aspect:
+        crop_w = crop_h * target_aspect
+    else:
+        crop_h = crop_w / target_aspect
+
+    crop_w = min(crop_w, float(img_w))
+    crop_h = min(crop_h, float(img_h))
+
+    left = int(round(cx - crop_w / 2))
+    top = int(round(cy - crop_h / 2))
+    left = max(0, min(left, img_w - int(round(crop_w))))
+    top = max(0, min(top, img_h - int(round(crop_h))))
+    right = min(img_w, left + int(round(crop_w)))
+    bottom = min(img_h, top + int(round(crop_h)))
+    return left, top, right, bottom
 
 
 def _find_borderline_clusters(
@@ -291,6 +401,7 @@ def _find_sam3_face(
     return best if best_iou > 0.3 else None
 
 
+
 # ---------------------------------------------------------------------------
 # Phase 2 — Per-frame masking
 # ---------------------------------------------------------------------------
@@ -301,37 +412,42 @@ def run_masking_phase(job_id: str) -> None:
     write_status(job_id, "masking")
 
     try:
-        # Extract all frames at native fps for full-quality output
+        # Extract all frames at native fps for full-quality output.
         native_fps = getattr(store, "native_fps", None) or get_video_fps(store.video_path)
         all_frames_dir = settings.upload_path / job_id / "all_frames"
         frames = extract_frames(store.video_path, all_frames_dir, fps=native_fps)
 
         masked_dir = settings.upload_path / job_id / "masked_frames"
         masked_dir.mkdir(parents=True, exist_ok=True)
+        for old_frame in masked_dir.glob("*.jpg"):
+            old_frame.unlink()
 
-        emit_log(job_id, {"step": "mask", "message": f"{len(frames)}개 프레임 마스킹 시작 ({native_fps:.2f}fps)"})
+        emit_log(job_id, {
+            "step": "mask",
+            "message": f"{len(frames)}개 프레임 원본 방식(per-frame SAM3) 마스킹 시작 ({native_fps:.2f}fps)",
+        })
 
         total_faces = 0
         total_pii = 0
+        selected_pii_types = _selected_pii_types(store)
+        debug_overlay = bool(settings.DEBUG_MASK_OVERLAY)
 
-        # Determine what to detect per frame with SAM3
-        pii_types_to_detect = []
+        # Original masking path: run SAM3 image detection on every output frame.
+        # Faces are verified with InsightFace; non-face PII is masked by selected type.
+        pii_types_to_detect: list[str] = []
         if "face" in store.expected_pii:
             pii_types_to_detect.append("face")
-        pii_types_to_detect += store.masked_pii_types
+        pii_types_to_detect += selected_pii_types
 
-        # Cache last-known polygon per cluster_id / pii_type for temporal propagation.
-        # If SAM3 misses a frame the cached polygon is reused for up to PII_CACHE_TTL frames.
-        PII_CACHE_TTL = 30
-        face_cache: dict[int, dict] = {}  # cluster_id → {polygon, last_seen}
-        pii_cache: dict[str, dict] = {}   # pii_type   → {polygon, mask_strategy, last_seen}
+        # Strict per-frame mode: do not reuse stale polygons across frames.
+        # Reusing cached masks caused fixed masks to remain after objects moved away.
 
         for idx, fp in enumerate(frames):
             img = cv2.imread(str(fp))
             if img is None:
                 continue
 
-            # SAM3 detect all relevant PII in this frame
+            # SAM3 detect all relevant PII in this frame.
             sam3_objs: list[dict] = []
             if sam3_available() and pii_types_to_detect:
                 sam3_objs = detect_pii(
@@ -340,12 +456,9 @@ def run_masking_phase(job_id: str) -> None:
                     settings.SAM3_CONFIDENCE_THRESHOLD,
                 )
 
-            # — Face masking —
-            # Strategy: SAM3 polygon (high quality) + InsightFace identity check
+            # Face masking: SAM3 polygon + InsightFace identity check.
             face_objs = [o for o in sam3_objs if o["type"] == "face"]
             if "face" in store.expected_pii:
-                masked_cids: set[int] = set()
-
                 if face_objs:
                     full_faces = detect_faces(str(fp))
                     for obj in face_objs:
@@ -361,19 +474,18 @@ def run_masking_phase(job_id: str) -> None:
                             if emb is not None else None
                         )
 
-                        # Update face cache for every identified face (protected or not)
-                        if cid is not None and obj["polygon"] is not None:
-                            face_cache[cid] = {"polygon": obj["polygon"], "last_seen": idx}
-
                         if cid is None or cid not in store.protected_face_cluster_ids:
-                            img = apply_polygon_mask(img, obj["polygon"], "blur")
+                            img = apply_polygon_mask(
+                                img,
+                                obj.get("polygon"),
+                                "blur",
+                                overlay_color=_overlay_color("face", debug_overlay),
+                            )
                             total_faces += 1
-                            if cid is not None:
-                                masked_cids.add(cid)
                 elif sam3_available():
-                    pass  # SAM3 available but detected no faces this frame — use cache below
+                    pass  # SAM3 available but detected no faces this frame.
                 else:
-                    # SAM3 not available → InsightFace bbox fallback (no cache)
+                    # SAM3 not available: InsightFace bbox fallback (no cache).
                     for face in detect_faces(str(fp)):
                         cid = find_best_cluster(
                             face["embedding"],
@@ -381,41 +493,25 @@ def run_masking_phase(job_id: str) -> None:
                             settings.FACE_SIMILARITY_THRESHOLD,
                         )
                         if cid is None or cid not in store.protected_face_cluster_ids:
-                            img = blur_bbox(img, face["bbox_xyxy"])
+                            img = blur_bbox(
+                                img,
+                                face["bbox_xyxy"],
+                                overlay_color=_overlay_color("face", debug_overlay),
+                            )
                             total_faces += 1
 
-                # TTL fallback: reuse cached polygon for faces SAM3 missed this frame
-                for cid, cached in face_cache.items():
-                    if cid in masked_cids:
-                        continue  # already masked this frame
-                    if cid in store.protected_face_cluster_ids:
-                        continue  # protected, never mask
-                    if (idx - cached["last_seen"]) <= PII_CACHE_TTL:
-                        img = apply_polygon_mask(img, cached["polygon"], "blur")
-                        total_faces += 1
 
-            # — Non-face PII masking —
-            detected_pii_types: set[str] = set()
+            # Non-face PII masking by selected type.
             for obj in sam3_objs:
                 if obj["type"] == "face":
                     continue
-                if obj["type"] in store.masked_pii_types:
-                    img = apply_polygon_mask(img, obj["polygon"], obj["mask_strategy"])
-                    total_pii += 1
-                    detected_pii_types.add(obj["type"])
-                    pii_cache[obj["type"]] = {
-                        "polygon":       obj["polygon"],
-                        "mask_strategy": obj["mask_strategy"],
-                        "last_seen":     idx,
-                    }
-
-            # Fallback: propagate cached polygon for PII types SAM3 missed this frame
-            for pii_type in store.masked_pii_types:
-                if pii_type in detected_pii_types:
-                    continue
-                cached = pii_cache.get(pii_type)
-                if cached and (idx - cached["last_seen"]) <= PII_CACHE_TTL:
-                    img = apply_polygon_mask(img, cached["polygon"], cached["mask_strategy"])
+                if obj["type"] in selected_pii_types:
+                    img = apply_polygon_mask(
+                        img,
+                        obj.get("polygon"),
+                        obj.get("mask_strategy", "blackbox"),
+                        overlay_color=_overlay_color(obj["type"], debug_overlay),
+                    )
                     total_pii += 1
 
             cv2.imwrite(str(masked_dir / fp.name), img)
@@ -434,23 +530,33 @@ def run_masking_phase(job_id: str) -> None:
             "message": f"마스킹 완료 — 얼굴 {total_faces}개, 비얼굴 PII {total_pii}개",
         })
 
-        # Compose video at native fps
+        # Compose video at native fps.
         out_dir = settings.output_path / job_id
         out_path = out_dir / "output.mp4"
         compose_video(masked_dir, out_path, fps=native_fps)
         store.output_video_path = str(out_path)
         emit_log(job_id, {"step": "compose", "message": "영상 합성 완료"})
 
-        # Report
         report = {
             "job_id": job_id,
             "scene_type": store.scene_type,
             "expected_pii": store.expected_pii,
             "total_people_detected": len(store.face_clusters),
             "protected_face_cluster_ids": store.protected_face_cluster_ids,
-            "masked_pii_types": store.masked_pii_types,
+            "masked_pii_types": selected_pii_types,
+            "selected_pii_category_count": len(selected_pii_types),
+            "total_pii_candidates_detected": len(store.pii_candidates),
             "total_faces_blurred": total_faces,
             "total_pii_masked": total_pii,
+            "colored_mask_enabled": debug_overlay,
+            "debug_mask_overlay_enabled": debug_overlay,
+            "sam3_video_tracking_enabled": False,
+            "temporal_mask_cache_enabled": False,
+            "mask_colors": {
+                k: MASK_COLOR_HEX[k]
+                for k in ["face", *selected_pii_types]
+                if k in MASK_COLOR_HEX
+            } if debug_overlay else {},
             "output_video_path": str(out_path),
         }
         (out_dir / "report.json").write_text(
@@ -467,3 +573,21 @@ def run_masking_phase(job_id: str) -> None:
         store.error = str(exc)
         write_status(job_id, "failed", str(exc))
         emit_log(job_id, {"step": "error", "message": str(exc)})
+
+def _mask_color_bgr(pii_type: str) -> tuple[int, int, int]:
+    hex_color = MASK_COLOR_HEX.get(pii_type, "#f59e0b").lstrip("#")
+    red = int(hex_color[0:2], 16)
+    green = int(hex_color[2:4], 16)
+    blue = int(hex_color[4:6], 16)
+    return blue, green, red
+
+
+def _overlay_color(pii_type: str, enabled: bool) -> tuple[int, int, int] | None:
+    return _mask_color_bgr(pii_type) if enabled else None
+
+
+def _selected_pii_types(store) -> list[str]:
+    # PII masking is deliberately category/type-level.  Candidate thumbnails are
+    # examples that help users decide which categories to mask; they are not
+    # stable object identities across frames.
+    return list(dict.fromkeys(store.masked_pii_types))
