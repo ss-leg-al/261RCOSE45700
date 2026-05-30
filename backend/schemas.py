@@ -51,6 +51,7 @@ class GuidelineResponse(BaseModel):
 class SelectionRequest(BaseModel):
     protected_face_cluster_ids: list[int]
     masked_pii_types: list[str]
+    masked_pii_object_ids: list[int] | None = None
 
 
 class ProfileSummary(BaseModel):

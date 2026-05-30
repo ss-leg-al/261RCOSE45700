@@ -49,17 +49,19 @@ export const api = {
     return (await http.post(`/api/jobs/${jobId}/skip`)).data;
   },
 
-  async submitSelection(jobId, protectedFaceIds, maskedPiiTypes) {
+  async submitSelection(jobId, protectedFaceIds, maskedPiiTypes, maskedPiiObjectIds = []) {
     return (
       await http.post(`/api/jobs/${jobId}/selection`, {
         protected_face_cluster_ids: protectedFaceIds,
         masked_pii_types: maskedPiiTypes,
+        masked_pii_object_ids: maskedPiiObjectIds,
       })
     ).data;
   },
 
   downloadUrl:  (jobId) => `/api/jobs/${jobId}/download`,
   originalUrl:  (jobId) => `/api/jobs/${jobId}/original`,
+  maskPreviewUrl: (jobId) => `/api/jobs/${jobId}/mask-preview`,
 
   async getReport(jobId) {
     return (await http.get(`/api/jobs/${jobId}/report`)).data;

@@ -21,9 +21,10 @@ const SCENE_LABEL = {
 export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, jobId }) {
   const { scene_type, face_clusters = [], pii_candidates = [] } = candidates;
   const piiTypes = [...new Set(pii_candidates.map((p) => p.pii_type))];
+  const piiObjectIds = pii_candidates.map((p) => p.object_id);
 
   const [protectedFaces, setProtectedFaces] = useState(new Set());
-  const [maskedPiiTypes, setMaskedPiiTypes] = useState(new Set(piiTypes));
+  const [maskedPiiObjectIds, setMaskedPiiObjectIds] = useState(new Set(piiObjectIds));
   const [profiles, setProfiles]               = useState([]);
   const [profileOpen, setProfileOpen]         = useState(false);
   const [applyingProfile, setApplyingProfile] = useState(false);
@@ -31,14 +32,21 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
   const [profileFaces, setProfileFaces]       = useState(new Set()); // cluster IDs matched by profile
   const dropdownRef = useRef();
 
-  const selectedPiiTypes = [...maskedPiiTypes];
+  const selectedPiiTypes = [
+    ...new Set(
+      pii_candidates
+        .filter((p) => maskedPiiObjectIds.has(p.object_id))
+        .map((p) => p.pii_type)
+    ),
+  ];
+  const selectedPiiObjectIds = [...maskedPiiObjectIds];
 
   useEffect(() => {
     api.listProfiles().then(setProfiles).catch(() => {});
   }, []);
 
   useEffect(() => {
-    setMaskedPiiTypes(new Set(piiTypes));
+    setMaskedPiiObjectIds(new Set(piiObjectIds));
   }, [pii_candidates]);
 
   useEffect(() => {
@@ -61,7 +69,13 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
     try {
       const result = await api.applyProfile(jobId, profileId);
       setProtectedFaces(new Set(result.protected_face_cluster_ids));
-      setMaskedPiiTypes(new Set(result.masked_pii_types));
+      setMaskedPiiObjectIds(
+        new Set(
+          pii_candidates
+            .filter((p) => result.masked_pii_types.includes(p.pii_type))
+            .map((p) => p.object_id)
+        )
+      );
       setProfileFaces(new Set(result.protected_face_cluster_ids));
       setProfileResult(result);
     } finally {
@@ -78,15 +92,27 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
   }
 
   function togglePiiType(type) {
-    setMaskedPiiTypes((prev) => {
+    setMaskedPiiObjectIds((prev) => {
       const next = new Set(prev);
-      next.has(type) ? next.delete(type) : next.add(type);
+      const items = pii_candidates.filter((p) => p.pii_type === type);
+      const allSelected = items.every((p) => next.has(p.object_id));
+      items.forEach((p) => {
+        allSelected ? next.delete(p.object_id) : next.add(p.object_id);
+      });
+      return next;
+    });
+  }
+
+  function togglePiiObject(objectId) {
+    setMaskedPiiObjectIds((prev) => {
+      const next = new Set(prev);
+      next.has(objectId) ? next.delete(objectId) : next.add(objectId);
       return next;
     });
   }
 
   function submitSelection() {
-    onSubmit([...protectedFaces], selectedPiiTypes);
+    onSubmit([...protectedFaces], selectedPiiTypes, selectedPiiObjectIds);
   }
 
   const warnings = guideline.filter((g) => g.level === "warning");
@@ -400,17 +426,19 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
             >
               <div className="mb-4">
                 <h3 className="font-semibold text-sm" style={{ color: "var(--text)" }}>
-                  🔒 기타 개인정보 — 카테고리 마스크 선택
+                  🔒 기타 개인정보 — 개별 마스크 선택
                 </h3>
                 <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-                  후보 이미지는 예시입니다. 선택한 카테고리는 전체 영상에서 per-frame SAM3로 다시 탐지해 처리됩니다.
+                  썸네일을 개별로 눌러 마스킹할 후보만 선택하세요. 카테고리 버튼은 해당 후보 전체를 켜고 끕니다.
                 </p>
               </div>
 
               <div className="space-y-3">
                 {piiTypes.map((type) => {
                   const items = pii_candidates.filter((p) => p.pii_type === type);
-                  const masked = maskedPiiTypes.has(type);
+                  const selectedCount = items.filter((p) => maskedPiiObjectIds.has(p.object_id)).length;
+                  const masked = selectedCount > 0;
+                  const allSelected = selectedCount === items.length;
                   return (
                     <div
                       key={type}
@@ -428,7 +456,7 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
                         <span className="text-sm font-medium" style={{ color: "var(--text)" }}>
                           {PII_LABEL[type] ?? type}
                           <span className="ml-1.5 text-xs" style={{ color: "var(--muted)" }}>
-                            후보 {items.length}개
+                            {selectedCount}/{items.length}개 선택
                           </span>
                         </span>
                         <button
@@ -444,20 +472,32 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
                             border: "1px solid var(--border)",
                           }}
                         >
-                          {masked ? "마스킹 ON" : "마스킹 OFF"}
+                          {allSelected ? "전체 ON" : masked ? "일부 ON" : "OFF"}
                         </button>
                       </div>
 
                       <div className="flex gap-2 flex-wrap">
-                        {items.map((p) => (
+                        {items.map((p) => {
+                          const objectSelected = maskedPiiObjectIds.has(p.object_id);
+                          return (
                           <div
                             key={p.object_id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => togglePiiObject(p.object_id)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                togglePiiObject(p.object_id);
+                              }
+                            }}
                             className="relative rounded-lg overflow-hidden transition-all"
                             title={`${PII_LABEL[type] ?? type} 예시 #${p.object_id}`}
                             style={{
-                              opacity: masked ? 1 : 0.35,
-                              border: masked ? "1px solid rgba(245,158,11,0.65)" : "1px solid var(--border)",
-                              boxShadow: masked ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
+                              cursor: "pointer",
+                              opacity: objectSelected ? 1 : 0.35,
+                              border: objectSelected ? "1px solid rgba(245,158,11,0.65)" : "1px solid var(--border)",
+                              boxShadow: objectSelected ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
                             }}
                           >
                             <img
@@ -472,8 +512,17 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
                             >
                               예시 #{p.object_id}{p.frame_index !== null && p.frame_index !== undefined ? ` · f${p.frame_index}` : ""}
                             </div>
+                            {objectSelected && (
+                              <div
+                                className="absolute top-1 right-1 text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                style={{ background: "rgba(245,158,11,0.9)", color: "#fff" }}
+                              >
+                                ✓
+                              </div>
+                            )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   );
@@ -492,9 +541,9 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
               <span style={{ color: "var(--text)" }}>
                 {face_clusters.length - protectedFaces.size}/{face_clusters.length}
               </span>
-              &nbsp;블러 ·&nbsp;PII 카테고리&nbsp;
-              <span style={{ color: "var(--text)" }}>{maskedPiiTypes.size}</span>
-              /{piiTypes.length}종 마스킹
+              &nbsp;블러 ·&nbsp;PII&nbsp;
+              <span style={{ color: "var(--text)" }}>{selectedPiiObjectIds.length}</span>
+              /{pii_candidates.length}개 선택
             </p>
             <button
               onClick={submitSelection}

@@ -136,6 +136,7 @@ export default function DoneView({ jobId, onNewJob }) {
           )}
 
           <a
+            data-testid="download-output-link"
             href={api.downloadUrl(jobId)}
             download="output.mp4"
             className="rounded-xl px-4 py-2 text-xs font-semibold transition-all"
@@ -171,6 +172,8 @@ export default function DoneView({ jobId, onNewJob }) {
 /* ── 비교 탭: 원본 vs 결과 나란히 ─────────────────────────────── */
 function CompareTab({ jobId, report }) {
   const skipped = report?.skipped;
+  const showColoredPreview = Boolean(report?.colored_mask_enabled);
+  const resultVideoSrc = showColoredPreview ? api.maskPreviewUrl(jobId) : api.downloadUrl(jobId);
   return (
     <div className="flex flex-col gap-4 p-8 h-full">
       {skipped && (
@@ -186,11 +189,12 @@ function CompareTab({ jobId, report }) {
         <VideoPane label="원본" src={api.originalUrl(jobId)} badge="ORIGINAL" badgeColor="#5858a0" />
         {!skipped && (
           <VideoPane
-            label={report?.debug_mask_overlay_enabled ? "디버그 컬러 마스크 결과" : "마스킹 결과"}
-            src={api.downloadUrl(jobId)}
-            badge={report?.debug_mask_overlay_enabled ? "DEBUG MASK" : "MASKED"}
+            label={showColoredPreview ? "Colored mask preview" : "Masked result"}
+            src={resultVideoSrc}
+            badge={showColoredPreview ? "MASK PREVIEW" : "MASKED"}
             badgeColor="#10b981"
             glow
+            testId={showColoredPreview ? "colored-mask-preview-video" : "masked-output-video"}
           />
         )}
       </div>
@@ -208,7 +212,7 @@ function MaskLegend({ report }) {
       className="rounded-xl px-4 py-3 text-xs flex flex-wrap items-center gap-3 flex-shrink-0"
       style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.22)", color: "var(--muted)" }}
     >
-      <span className="font-semibold" style={{ color: "#10b981" }}>디버그 컬러 마스크</span>
+      <span className="font-semibold" style={{ color: "#10b981" }}>컬러 마스크 미리보기</span>
       {Object.entries(report.mask_colors).map(([type, color]) => (
         <span key={type} className="flex items-center gap-1.5">
           <span
@@ -219,13 +223,13 @@ function MaskLegend({ report }) {
         </span>
       ))}
       <span style={{ color: "rgba(221,221,245,0.55)" }}>
-        테스트 확인용으로 실제 마스킹 위에 색상을 덧입혔습니다.
+        다운로드 영상은 기존 블러/모자이크를 유지하고, 이 미리보기에서만 마스크 영역을 색으로 표시합니다.
       </span>
     </div>
   );
 }
 
-function VideoPane({ label, src, badge, badgeColor, glow }) {
+function VideoPane({ label, src, badge, badgeColor, glow, testId }) {
   return (
     <div
       className="flex-1 flex flex-col rounded-2xl overflow-hidden"
@@ -249,6 +253,7 @@ function VideoPane({ label, src, badge, badgeColor, glow }) {
       </div>
       <div className="flex-1 flex items-center justify-center p-3" style={{ background: "#000" }}>
         <video
+          data-testid={testId}
           src={src}
           controls
           className="max-h-full max-w-full rounded-lg"
@@ -275,6 +280,7 @@ function ReportTab({ report }) {
   const totalPeople    = report.total_people_detected ?? 0;
   const blurredPeople  = totalPeople - protectedCount;
   const selectedPiiCategoryCount = report.selected_pii_category_count ?? maskedPiiTypes.length;
+  const selectedPiiObjectCount = report.selected_pii_object_count ?? report.masked_pii_object_ids?.length ?? 0;
   const totalPiiCandidateCount = report.total_pii_candidates_detected ?? 0;
 
   const cards = isSkipped ? [
@@ -322,15 +328,17 @@ function ReportTab({ report }) {
       color: "#06b6d4",
     },
     {
-      label: "선택된 PII 카테고리",
-      value: `${selectedPiiCategoryCount}종`,
-      sub: `후보 예시 ${totalPiiCandidateCount}개 기준`,
+      label: "선택된 PII 후보",
+      value: selectedPiiObjectCount > 0 ? `${selectedPiiObjectCount}개` : `${selectedPiiCategoryCount}종`,
+      sub: selectedPiiObjectCount > 0
+        ? `후보 예시 ${totalPiiCandidateCount}개 중 개별 선택`
+        : `후보 예시 ${totalPiiCandidateCount}개 기준`,
       color: "#f97316",
     },
     {
-      label: "디버그 컬러 오버레이",
-      value: report.debug_mask_overlay_enabled ? "적용됨" : "미적용",
-      sub: "테스트용 변경 영역 표시",
+      label: "컬러 마스크 미리보기",
+      value: report.colored_mask_enabled ? "적용됨" : "미적용",
+      sub: "완료 화면에서 변경 영역 표시",
       color: "#10b981",
     },
   ];
