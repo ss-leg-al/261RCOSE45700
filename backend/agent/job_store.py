@@ -33,6 +33,7 @@ class JobStore:
     # GPT-4o results
     scene_type: str | None = None
     expected_pii: list[str] = field(default_factory=list)
+    scene_analysis: dict = field(default_factory=dict)
 
     # InsightFace clustering
     face_clusters: list[FaceCluster] = field(default_factory=list)
