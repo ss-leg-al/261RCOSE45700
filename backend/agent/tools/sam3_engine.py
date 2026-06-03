@@ -41,6 +41,14 @@ _TEXT_PROMPTS = {
         "vehicle registration plate",
         "car number plate",
     ),
+    "brand_logo": (
+        "product logo",
+        "logo on product",
+        "trademark logo",
+        "product trademark",
+        "branded product label",
+        "brand mark on package",
+    ),
 }
 
 _DEDUP_IOU_THRESHOLD = 0.5
@@ -52,6 +60,7 @@ MASK_STRATEGY = {
     "nameplate": "blackbox",
     "id_card":   "blackbox",
     "license_plate": "blackbox",
+    "brand_logo": "ambient_fill",
 }
 
 

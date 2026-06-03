@@ -144,6 +144,9 @@ def skip_job(job_id: str):
     store.report = {
         "job_id":             job_id,
         "scene_type":         store.scene_type,
+        "expected_pii":       store.expected_pii,
+        "detection_pii_types": store.detection_pii_types or [],
+        "deterministic_pii_types_added": store.deterministic_pii_types_added or [],
         "skipped":            True,
         "total_people_detected": len(store.face_clusters),
         "total_faces_blurred":   0,

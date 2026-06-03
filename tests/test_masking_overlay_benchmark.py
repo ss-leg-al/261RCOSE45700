@@ -28,6 +28,7 @@ MASK_VISUAL_COLORS_BGR = {
     "nameplate": (68, 68, 239),
     "id_card": (129, 185, 16),
     "license_plate": (22, 115, 249),
+    "brand_logo": (153, 72, 236),
 }
 
 

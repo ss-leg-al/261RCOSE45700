@@ -16,7 +16,7 @@ class FaceCluster:
 @dataclass
 class PIICandidate:
     object_id: int
-    pii_type: str    # document | screen | nameplate | id_card | license_plate
+    pii_type: str    # document | screen | nameplate | id_card | license_plate | brand_logo
     thumbnail: str   # filename under uploads/{job_id}/thumbnails/
     confidence: float
     frame_index: int | None = None
@@ -38,6 +38,8 @@ class JobStore:
     # GPT-4o results
     scene_type: str | None = None
     expected_pii: list[str] = field(default_factory=list)
+    detection_pii_types: list[str] | None = None
+    deterministic_pii_types_added: list[str] | None = None
 
     # InsightFace clustering
     face_clusters: list[FaceCluster] = field(default_factory=list)

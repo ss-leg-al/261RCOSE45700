@@ -44,6 +44,7 @@ MASK_COLOR_HEX = {
     "nameplate":     "#ef4444",
     "id_card":       "#10b981",
     "license_plate": "#f97316",
+    "brand_logo":    "#ec4899",
 }
 
 
@@ -90,8 +91,14 @@ def run_detection_phase(job_id: str) -> None:
 
         scene_type  = Counter(scene_type_votes).most_common(1)[0][0]
         expected_pii = list(expected_pii_union)
+        detection_pii_types = _pii_types_for_detection(expected_pii)
+        deterministic_pii_types_added = [
+            pii_type for pii_type in detection_pii_types if pii_type not in expected_pii
+        ]
         store.scene_type  = scene_type
         store.expected_pii = expected_pii
+        store.detection_pii_types = detection_pii_types
+        store.deterministic_pii_types_added = deterministic_pii_types_added
         emit_log(job_id, {
             "step": "scene",
             "message": f"씬 분석 완료: {scene_type} → {expected_pii} ({len(sample_indices)}프레임 합산)",
@@ -104,14 +111,14 @@ def run_detection_phase(job_id: str) -> None:
         # sam3_detections: list of (frame_path, detection_dict)
         sam3_detections: list[tuple[int, dict]] = []  # (frame_idx, face_obj) for thumbnail matching
         sam3_frame_detections: list[tuple] = []       # (frame_idx, frame_path, obj) for all detections
-        if sam3_available() and expected_pii:
+        if sam3_available() and detection_pii_types:
             n_samples = min(5, len(frames))
             sample_indices = [int(len(frames) * i / n_samples) for i in range(n_samples)]
             total_detected = 0
             for si in sample_indices:
                 detections = detect_pii(
                     str(frames[si]),
-                    expected_pii,
+                    detection_pii_types,
                     settings.SAM3_CONFIDENCE_THRESHOLD,
                 )
                 for obj in detections:
@@ -438,7 +445,7 @@ def run_masking_phase(job_id: str) -> None:
         selected_pii_types = _selected_pii_types(store)
         pii_selection = _build_pii_selection(store)
         # The downloadable output must stay privacy-preserving only
-        # (blur/pixelate/blackbox). Colored masks are generated as a separate
+        # (blur/pixelate/blackbox/ambient_fill). Colored masks are generated as a separate
         # completed-state preview video so users can see what was affected.
         output_overlay = False
 
@@ -517,6 +524,8 @@ def run_masking_phase(job_id: str) -> None:
             "job_id": job_id,
             "scene_type": store.scene_type,
             "expected_pii": store.expected_pii,
+            "detection_pii_types": _detection_pii_types_for_report(store),
+            "deterministic_pii_types_added": _deterministic_pii_types_added(store),
             "total_people_detected": len(store.face_clusters),
             "protected_face_cluster_ids": store.protected_face_cluster_ids,
             "masked_pii_types": selected_pii_types,
@@ -883,7 +892,7 @@ def _write_colored_preview_frame(
     """Write a lightweight colored preview derived from the private output.
 
     The preview starts from the already-masked frame so it does not expose the
-    original pixels. We only add colored overlays here; blur/pixelate/blackbox
+    original pixels. We only add colored overlays here; blur/pixelate/blackbox/ambient_fill
     have already been applied once to the downloadable output frame.
     """
     preview = masked_img.copy()
@@ -1169,3 +1178,32 @@ def _selected_pii_types(store) -> list[str]:
         if candidate.object_id in selected_object_ids:
             selected.append(candidate.pii_type)
     return list(dict.fromkeys(selected))
+
+
+def _pii_types_for_detection(expected_pii: list[str]) -> list[str]:
+    """Return PII types SAM3 should consider during candidate discovery.
+
+    Brand logos are privacy/compliance-sensitive enough that discovery should
+    not rely solely on scene-analyzer recall. Keeping this as a feature flag
+    preserves a cheap opt-out for local benchmarking or prompt tuning.
+    """
+    pii_types = list(expected_pii or [])
+    if settings.BRAND_LOGO_DETECTION_ENABLED and "brand_logo" not in pii_types:
+        pii_types.append("brand_logo")
+    return pii_types
+
+
+def _detection_pii_types_for_report(store) -> list[str]:
+    detection_pii_types = getattr(store, "detection_pii_types", None)
+    if detection_pii_types is not None:
+        return list(detection_pii_types)
+    return _pii_types_for_detection(getattr(store, "expected_pii", []) or [])
+
+
+def _deterministic_pii_types_added(store) -> list[str]:
+    added = getattr(store, "deterministic_pii_types_added", None)
+    if added is not None:
+        return list(added)
+    detection_pii_types = _detection_pii_types_for_report(store)
+    expected_pii = set(getattr(store, "expected_pii", []) or [])
+    return [pii_type for pii_type in detection_pii_types if pii_type not in expected_pii]
