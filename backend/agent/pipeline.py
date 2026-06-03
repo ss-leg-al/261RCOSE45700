@@ -5,7 +5,6 @@ Two-phase pipeline:
 """
 from __future__ import annotations
 
-import json
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -15,6 +14,7 @@ import numpy as np
 
 from .job_store import FaceCluster, PIICandidate, get_store
 from .log_emitter import emit_log, write_status
+from .report_builder import build_final_report, build_intermediate_scene_analysis, write_report
 from .tools.face_engine import (
     bbox_iou,
     cluster_embeddings,
@@ -58,13 +58,18 @@ def run_detection_phase(job_id: str) -> None:
             "message": f"씬 분석 중 ({len(sample_indices)}개 프레임 병렬 처리)...",
         })
 
+        scene_results: list[dict] = []
         scene_type_votes: list[str] = []
         expected_pii_union: set[str] = set()
 
         with ThreadPoolExecutor(max_workers=len(sample_indices)) as pool:
             futures = {pool.submit(analyze_scene, str(frames[i])): i for i in sample_indices}
             for fut in as_completed(futures):
-                st, pii = fut.result()
+                result = fut.result()
+                result["frame_index"] = futures[fut]
+                scene_results.append(result)
+                st = result.get("scene_type", "other")
+                pii = result.get("expected_pii", [])
                 scene_type_votes.append(st)
                 expected_pii_union.update(pii)
 
@@ -72,9 +77,14 @@ def run_detection_phase(job_id: str) -> None:
         expected_pii = list(expected_pii_union)
         store.scene_type  = scene_type
         store.expected_pii = expected_pii
+        store.scene_analysis = build_intermediate_scene_analysis(
+            sorted(scene_results, key=lambda item: item.get("frame_index", 0)),
+            scene_type,
+            expected_pii,
+        )
         emit_log(job_id, {
             "step": "scene",
-            "message": f"씬 분석 완료: {scene_type} → {expected_pii} ({len(sample_indices)}프레임 합산)",
+            "message": f"씬 분석 완료: {scene_type} → {expected_pii} ({len(sample_indices)}프레임 상세 합산)",
         })
 
         thumb_dir = settings.upload_path / job_id / "thumbnails"
@@ -441,21 +451,14 @@ def run_masking_phase(job_id: str) -> None:
         store.output_video_path = str(out_path)
         emit_log(job_id, {"step": "compose", "message": "영상 합성 완료"})
 
-        # Report
-        report = {
-            "job_id": job_id,
-            "scene_type": store.scene_type,
-            "expected_pii": store.expected_pii,
-            "total_people_detected": len(store.face_clusters),
-            "protected_face_cluster_ids": store.protected_face_cluster_ids,
-            "masked_pii_types": store.masked_pii_types,
-            "total_faces_blurred": total_faces,
-            "total_pii_masked": total_pii,
-            "output_video_path": str(out_path),
-        }
-        (out_dir / "report.json").write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        report = build_final_report(
+            store=store,
+            job_id=job_id,
+            total_faces_blurred=total_faces,
+            total_pii_masked=total_pii,
+            output_video_path=str(out_path),
         )
+        write_report(report, str(out_path))
         store.report = report
 
         store.status = "done"
