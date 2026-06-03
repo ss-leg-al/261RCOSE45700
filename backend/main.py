@@ -15,6 +15,7 @@ import numpy as np
 from .agent.job_store import get_store, list_stores
 from .agent.pipeline import run_detection_phase, run_masking_phase
 from .agent.profile_store import delete_profile, get_profile, list_profiles, save_profile
+from .agent.report_builder import build_final_report, write_report
 from .config import settings
 from .models.sam3_loader import get_load_error, is_available, load_sam3
 from .schemas import (
@@ -122,6 +123,7 @@ def get_candidates(job_id: str):
             }
             for p in store.pii_candidates
         ],
+        scene_analysis=store.scene_analysis or None,
     )
 
 
@@ -138,14 +140,15 @@ def skip_job(job_id: str):
     if store.status != "awaiting_selection":
         raise HTTPException(400, f"현재 상태({store.status})에서는 스킵할 수 없습니다")
     store.output_video_path = store.video_path
-    store.report = {
-        "job_id":             job_id,
-        "scene_type":         store.scene_type,
-        "skipped":            True,
-        "total_people_detected": len(store.face_clusters),
-        "total_faces_blurred":   0,
-        "total_pii_masked":      0,
-    }
+    store.report = build_final_report(
+        store=store,
+        job_id=job_id,
+        total_faces_blurred=0,
+        total_pii_masked=0,
+        output_video_path=store.video_path,
+        skipped=True,
+    )
+    write_report(store.report, store.video_path)
     store.status = "done"
     write_status(job_id, "done")
     return {"message": "편집 없이 완료"}
