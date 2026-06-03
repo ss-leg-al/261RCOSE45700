@@ -64,6 +64,26 @@
 - **identity 기반 보호** — 단순히 "첫 번째 얼굴 = 본인" 같은 위치 기반이 아니라, 얼굴 embedding으로 인물을 인식하기 때문에 본인이 화면 어디에 있든 정확히 보호됩니다.
 - **PII 종류별 적절한 처리** — 얼굴은 블러, 텍스트/번호판은 blackbox, 화면은 pixelate, 상품 로고/상표는 주변 색상 기반 자연 채움 등 종류에 맞는 마스킹 방식을 자동 선택합니다. `DEBUG_MASK_OVERLAY=true`일 때만 테스트 확인용 컬러 오버레이를 덧입힙니다.
 
+### 마스킹 예시
+
+아래 예시는 로컬 샘플에서 뽑은 대표 프레임입니다. 각 이미지는 하나의 카테고리만 보여주며, 왼쪽은 원본, 오른쪽은 마스킹본입니다.
+
+**얼굴**
+
+![얼굴 원본과 마스킹본](docs/assets/privacy-examples/face-original-vs-masked.jpg)
+
+**번호판**
+
+![번호판 원본과 마스킹본](docs/assets/privacy-examples/license-plate-original-vs-masked.jpg)
+
+**화면**
+
+![화면 원본과 마스킹본](docs/assets/privacy-examples/screen-original-vs-masked.jpg)
+
+**상품 로고/상표**
+
+![상품 로고/상표 원본과 마스킹본](docs/assets/privacy-examples/product-logo-original-vs-masked.jpg)
+
 ---
 
 ## 상태와 진행 로그
