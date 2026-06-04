@@ -15,6 +15,7 @@ import numpy as np
 from .agent.job_store import get_store, list_stores
 from .agent.pipeline import run_detection_phase, run_masking_phase
 from .agent.profile_store import delete_profile, get_profile, list_profiles, save_profile
+from .agent.report_builder import build_final_report, write_report
 from .config import settings
 from .models.sam3_loader import get_load_error, is_available, load_sam3
 from .schemas import (
@@ -123,6 +124,7 @@ def get_candidates(job_id: str):
             }
             for p in store.pii_candidates
         ],
+        scene_analysis=store.scene_analysis or None,
     )
 
 
@@ -141,25 +143,26 @@ def skip_job(job_id: str):
     store.output_video_path = store.video_path
     store.mask_preview_video_path = None
     store.mask_preview_frames_dir = None
-    store.report = {
-        "job_id":             job_id,
-        "scene_type":         store.scene_type,
-        "expected_pii":       store.expected_pii,
-        "detection_pii_types": store.detection_pii_types or [],
+    store.report = build_final_report(
+        store=store,
+        job_id=job_id,
+        total_faces_blurred=0,
+        total_pii_masked=0,
+        output_video_path=store.video_path,
+        skipped=True,
+    )
+    store.report.update({
+        "detection_pii_types":           store.detection_pii_types or [],
         "deterministic_pii_types_added": store.deterministic_pii_types_added or [],
-        "skipped":            True,
-        "total_people_detected": len(store.face_clusters),
-        "total_faces_blurred":   0,
-        "total_pii_masked":      0,
-        "masked_pii_types":      [],
-        "masked_pii_object_ids": [],
-        "selected_pii_object_count": 0,
-        "colored_mask_enabled":  False,
-        "colored_mask_preview_enabled": False,
-        "debug_mask_overlay_enabled": False,
-        "mask_preview_video_path": None,
-        "mask_colors": {},
-    }
+        "masked_pii_object_ids":         [],
+        "selected_pii_object_count":     0,
+        "colored_mask_enabled":          False,
+        "colored_mask_preview_enabled":  False,
+        "debug_mask_overlay_enabled":    False,
+        "mask_preview_video_path":       None,
+        "mask_colors":                   {},
+    })
+    write_report(store.report, store.video_path)
     store.status = "done"
     write_status(job_id, "done")
     return {"message": "편집 없이 완료"}

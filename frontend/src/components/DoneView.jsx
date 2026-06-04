@@ -276,6 +276,11 @@ function ReportTab({ report }) {
 
   const isSkipped      = report.skipped === true;
   const protectedCount = report.protected_face_cluster_ids?.length ?? 0;
+  const sceneAnalysis  = report.scene_analysis ?? {};
+  const risk           = report.risk_assessment ?? {};
+  const detection      = report.detection_summary ?? {};
+  const checklist      = report.review_checklist ?? [];
+  const guidelines     = report.guideline_items ?? [];
   const maskedPiiTypes = (report.masked_pii_types ?? []).map((t) => PII_LABEL[t] ?? t);
   const detectionPiiTypes = report.detection_pii_types ?? report.expected_pii ?? [];
   const detectionPiiLabels = detectionPiiTypes.map((t) => PII_LABEL[t] ?? t);
@@ -351,6 +356,35 @@ function ReportTab({ report }) {
 
   return (
     <div className="p-8 space-y-6 animate-slide-up">
+      {/* Executive summary */}
+      {report.executive_summary && (
+        <section
+          className="rounded-2xl p-6"
+          style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold mb-2" style={{ color: "var(--muted)" }}>
+                PRIVACY PROCESSING REPORT
+              </p>
+              <p className="text-sm mt-1 leading-relaxed max-w-3xl" style={{ color: "var(--muted)" }}>
+                {report.executive_summary}
+              </p>
+            </div>
+            {risk.level && (
+              <div
+                className="rounded-xl px-4 py-3 text-right flex-shrink-0"
+                style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.22)" }}
+              >
+                <p className="text-[11px] font-semibold" style={{ color: "var(--muted)" }}>위험도</p>
+                <p className="text-xl font-bold" style={{ color: "#f59e0b" }}>{risk.level}</p>
+                <p className="text-xs" style={{ color: "var(--muted)" }}>{risk.score ?? 0}/100</p>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-4">
         {cards.map((c) => (
@@ -365,6 +399,115 @@ function ReportTab({ report }) {
           </div>
         ))}
       </div>
+
+      {/* Scene analysis + risk reasons */}
+      {(sceneAnalysis.frame_count || risk.reasons?.length > 0) && (
+        <div className="grid grid-cols-2 gap-4">
+          <ReportSection title="씬 분석 상세">
+            <div className="space-y-3">
+              <InfoRow label="분석 씬" value={sceneAnalysis.scene_label ?? SCENE_LABEL[report.scene_type] ?? report.scene_type ?? "—"} />
+              <InfoRow label="분석 프레임" value={`${sceneAnalysis.frame_count ?? 0}개`} />
+              {sceneAnalysis.confidence != null && (
+                <InfoRow label="신뢰도" value={`${Math.round(sceneAnalysis.confidence * 100)}%`} />
+              )}
+              {(sceneAnalysis.expected_pii_labels ?? []).length > 0 && (
+                <TagList label="예상 PII" items={sceneAnalysis.expected_pii_labels} />
+              )}
+              {(sceneAnalysis.top_privacy_risks ?? []).length > 0 && (
+                <VoteList title="주요 리스크" items={sceneAnalysis.top_privacy_risks} />
+              )}
+              {(sceneAnalysis.recommended_focus ?? []).length > 0 && (
+                <VoteList title="검토 포인트" items={sceneAnalysis.recommended_focus} />
+              )}
+            </div>
+          </ReportSection>
+
+          <ReportSection title="위험 평가 근거">
+            <div className="space-y-2">
+              {(risk.reasons ?? []).map((reason, index) => (
+                <p
+                  key={`${reason}-${index}`}
+                  className="text-sm leading-relaxed rounded-xl px-3 py-2"
+                  style={{ color: "var(--muted)", background: "rgba(255,255,255,0.035)" }}
+                >
+                  {reason}
+                </p>
+              ))}
+            </div>
+          </ReportSection>
+        </div>
+      )}
+
+      {/* Detection + checklist */}
+      {((detection.face_clusters?.length > 0 || detection.pii_candidates?.length > 0) || checklist.length > 0) && (
+        <div className="grid grid-cols-2 gap-4">
+          <ReportSection title="감지 항목별 처리">
+            <div className="space-y-3">
+              <CompactTable
+                empty="감지된 인물이 없습니다"
+                rows={(detection.face_clusters ?? []).map((face) => ({
+                  key: face.cluster_id,
+                  name: face.display_name,
+                  meta: `${face.appearances}회 등장`,
+                  action: face.planned_action,
+                  active: face.protected,
+                }))}
+              />
+              <CompactTable
+                empty="감지된 비얼굴 PII가 없습니다"
+                rows={(detection.pii_candidates ?? []).map((pii) => ({
+                  key: pii.object_id,
+                  name: pii.label,
+                  meta: `신뢰도 ${Math.round((pii.confidence ?? 0) * 100)}%`,
+                  action: pii.planned_action,
+                  active: pii.selected_for_masking,
+                }))}
+              />
+            </div>
+          </ReportSection>
+
+          <ReportSection title="최종 검토 체크리스트">
+            <div className="space-y-2">
+              {checklist.map((item) => (
+                <div
+                  key={item.title}
+                  className="rounded-xl px-3 py-3"
+                  style={{ background: "rgba(255,255,255,0.035)", border: "1px solid var(--border)" }}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>{item.title}</p>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ color: "#f59e0b", background: "rgba(245,158,11,0.12)" }}>
+                      {item.status}
+                    </span>
+                  </div>
+                  <p className="text-xs mt-1 leading-relaxed" style={{ color: "var(--muted)" }}>{item.detail}</p>
+                </div>
+              ))}
+            </div>
+          </ReportSection>
+        </div>
+      )}
+
+      {/* Guidelines */}
+      {guidelines.length > 0 && (
+        <ReportSection title="AI 편집 가이드라인">
+          <div className="grid grid-cols-2 gap-2">
+            {guidelines.map((item, index) => (
+              <p
+                key={`${item.message}-${index}`}
+                className="text-sm rounded-xl px-3 py-2"
+                style={{
+                  color: item.level === "warning" ? "#fbbf24" : "var(--muted)",
+                  background: item.level === "warning" ? "rgba(245,158,11,0.08)" : "rgba(255,255,255,0.035)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                {item.message}
+              </p>
+            ))}
+          </div>
+        </ReportSection>
+      )}
 
       {/* Raw JSON */}
       <div
@@ -397,6 +540,98 @@ function ReportTab({ report }) {
           {JSON.stringify(report, null, 2)}
         </pre>
       </div>
+    </div>
+  );
+}
+
+function ReportSection({ title, children }) {
+  return (
+    <section
+      className="rounded-2xl p-5"
+      style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+    >
+      <h3 className="text-sm font-bold mb-4" style={{ color: "var(--text)" }}>{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function InfoRow({ label, value }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-sm">
+      <span style={{ color: "var(--muted)" }}>{label}</span>
+      <span className="font-semibold text-right" style={{ color: "var(--text)" }}>{value}</span>
+    </div>
+  );
+}
+
+function TagList({ label, items }) {
+  return (
+    <div>
+      <p className="text-xs mb-2" style={{ color: "var(--muted)" }}>{label}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {(items ?? []).length === 0 ? (
+          <span className="text-xs" style={{ color: "var(--muted)" }}>없음</span>
+        ) : (
+          items.map((item) => (
+            <span
+              key={item}
+              className="text-xs px-2 py-1 rounded-full"
+              style={{ background: "rgba(59,130,246,0.12)", color: "#93c5fd", border: "1px solid rgba(59,130,246,0.24)" }}
+            >
+              {item}
+            </span>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VoteList({ title, items }) {
+  if (!items?.length) return null;
+  return (
+    <div>
+      <p className="text-xs mb-2" style={{ color: "var(--muted)" }}>{title}</p>
+      <div className="space-y-1.5">
+        {items.map((item, index) => (
+          <div key={`${item.message}-${index}`} className="flex items-start justify-between gap-3 text-xs">
+            <span className="leading-relaxed" style={{ color: "var(--text)" }}>{item.message}</span>
+            <span className="flex-shrink-0" style={{ color: "var(--muted)" }}>{item.votes}표</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CompactTable({ rows, empty }) {
+  if (!rows?.length) {
+    return <p className="text-sm" style={{ color: "var(--muted)" }}>{empty}</p>;
+  }
+  return (
+    <div className="space-y-2">
+      {rows.map((row) => (
+        <div
+          key={row.key}
+          className="grid grid-cols-[1fr_auto] gap-3 rounded-xl px-3 py-2"
+          style={{ background: "rgba(255,255,255,0.035)", border: "1px solid var(--border)" }}
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-semibold truncate" style={{ color: "var(--text)" }}>{row.name}</p>
+            <p className="text-xs" style={{ color: "var(--muted)" }}>{row.meta}</p>
+          </div>
+          <span
+            className="text-[11px] self-center px-2 py-1 rounded-full"
+            style={{
+              color: row.active ? "#10b981" : "#f59e0b",
+              background: row.active ? "rgba(16,185,129,0.1)" : "rgba(245,158,11,0.1)",
+            }}
+          >
+            {row.action}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

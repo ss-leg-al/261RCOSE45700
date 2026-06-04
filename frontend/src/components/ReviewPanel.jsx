@@ -20,7 +20,7 @@ const SCENE_LABEL = {
 };
 
 export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, jobId }) {
-  const { scene_type, face_clusters = [], pii_candidates = [] } = candidates;
+  const { scene_type, face_clusters = [], pii_candidates = [], scene_analysis } = candidates;
   const piiTypes = [...new Set(pii_candidates.map((p) => p.pii_type))];
   const piiObjectIds = pii_candidates.map((p) => p.object_id);
 
@@ -315,6 +315,10 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
             {infos.map((item, i) => (
               <GuidelineItem key={`i${i}`} item={item} />
             ))}
+
+            {scene_analysis && (
+              <SceneAnalysisCard analysis={scene_analysis} />
+            )}
           </div>
 
           {guideline.length > 0 && (
@@ -554,6 +558,58 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SceneAnalysisCard({ analysis }) {
+  const risks = analysis.top_privacy_risks ?? [];
+  const focus = analysis.recommended_focus ?? [];
+
+  return (
+    <div
+      className="rounded-xl p-3 mt-3 space-y-3"
+      style={{ background: "rgba(255,255,255,0.035)", border: "1px solid var(--border)" }}
+    >
+      <div>
+        <p className="text-xs font-semibold mb-1" style={{ color: "var(--text)" }}>씬 분석 상세</p>
+        <p className="text-[11px]" style={{ color: "var(--muted)" }}>
+          {analysis.frame_count ?? 0}개 프레임 합산
+          {analysis.confidence ? ` · 신뢰도 ${Math.round(analysis.confidence * 100)}%` : ""}
+        </p>
+      </div>
+
+      {analysis.expected_pii_labels?.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {analysis.expected_pii_labels.map((label) => (
+            <span
+              key={label}
+              className="text-[10px] px-2 py-0.5 rounded-full"
+              style={{ background: "rgba(59,130,246,0.12)", color: "#93c5fd", border: "1px solid rgba(59,130,246,0.24)" }}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {risks.length > 0 && <MiniList title="주요 리스크" items={risks} tone="#f59e0b" />}
+      {focus.length > 0 && <MiniList title="검토 포인트" items={focus} tone="#10b981" />}
+    </div>
+  );
+}
+
+function MiniList({ title, items, tone }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold mb-1" style={{ color: tone }}>{title}</p>
+      <div className="space-y-1">
+        {items.slice(0, 3).map((item, index) => (
+          <p key={`${item.message}-${index}`} className="text-[11px] leading-relaxed" style={{ color: "var(--muted)" }}>
+            {item.message}
+          </p>
+        ))}
       </div>
     </div>
   );

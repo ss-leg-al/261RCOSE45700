@@ -38,6 +38,7 @@ class JobStore:
     # GPT-4o results
     scene_type: str | None = None
     expected_pii: list[str] = field(default_factory=list)
+    scene_analysis: dict = field(default_factory=dict)
     detection_pii_types: list[str] | None = None
     deterministic_pii_types_added: list[str] | None = None
 

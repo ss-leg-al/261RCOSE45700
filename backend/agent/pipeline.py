@@ -5,7 +5,6 @@ Two-phase pipeline:
 """
 from __future__ import annotations
 
-import json
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -15,6 +14,7 @@ import numpy as np
 
 from .job_store import FaceCluster, PIICandidate, get_store
 from .log_emitter import emit_log, write_status
+from .report_builder import build_final_report, build_intermediate_scene_analysis, write_report
 from .tools.face_engine import (
     bbox_iou,
     cluster_embeddings,
@@ -79,15 +79,18 @@ def run_detection_phase(job_id: str) -> None:
             "message": f"씬 분석 중 ({len(sample_indices)}개 프레임 병렬 처리)...",
         })
 
+        scene_results: list[dict] = []
         scene_type_votes: list[str] = []
         expected_pii_union: set[str] = set()
 
         with ThreadPoolExecutor(max_workers=len(sample_indices)) as pool:
             futures = {pool.submit(analyze_scene, str(frames[i])): i for i in sample_indices}
             for fut in as_completed(futures):
-                st, pii = fut.result()
-                scene_type_votes.append(st)
-                expected_pii_union.update(pii)
+                result = fut.result()
+                result["frame_index"] = futures[fut]
+                scene_results.append(result)
+                scene_type_votes.append(result.get("scene_type", "other"))
+                expected_pii_union.update(result.get("expected_pii", []))
 
         scene_type  = Counter(scene_type_votes).most_common(1)[0][0]
         expected_pii = list(expected_pii_union)
@@ -97,6 +100,11 @@ def run_detection_phase(job_id: str) -> None:
         ]
         store.scene_type  = scene_type
         store.expected_pii = expected_pii
+        store.scene_analysis = build_intermediate_scene_analysis(
+            sorted(scene_results, key=lambda r: r.get("frame_index", 0)),
+            scene_type,
+            expected_pii,
+        )
         store.detection_pii_types = detection_pii_types
         store.deterministic_pii_types_added = deterministic_pii_types_added
         emit_log(job_id, {
@@ -520,28 +528,27 @@ def run_masking_phase(job_id: str) -> None:
             store.mask_preview_video_path = None
         emit_log(job_id, {"step": "compose", "message": "영상 합성 완료"})
 
-        report = {
-            "job_id": job_id,
-            "scene_type": store.scene_type,
-            "expected_pii": store.expected_pii,
-            "detection_pii_types": _detection_pii_types_for_report(store),
-            "deterministic_pii_types_added": _deterministic_pii_types_added(store),
-            "total_people_detected": len(store.face_clusters),
-            "protected_face_cluster_ids": store.protected_face_cluster_ids,
-            "masked_pii_types": selected_pii_types,
-            "masked_pii_object_ids": sorted(pii_selection["selected_object_ids"]),
-            "selected_pii_category_count": len(selected_pii_types),
-            "selected_pii_object_count": len(pii_selection["selected_object_ids"]),
-            "total_pii_candidates_detected": len(store.pii_candidates),
-            "total_faces_blurred": total_faces,
-            "total_pii_masked": total_pii,
-            "colored_mask_enabled": colored_preview_enabled,
-            "colored_mask_preview_enabled": colored_preview_enabled,
-            "mask_preview_max_side": settings.MASK_PREVIEW_MAX_SIDE if colored_preview_enabled else None,
-            "debug_mask_overlay_enabled": False,
-            "sam3_video_tracking_enabled": False,
-            "temporal_mask_cache_enabled": False,
-            "temporal_mask_interpolation_enabled": use_keyframe_interpolation,
+        report = build_final_report(
+            store=store,
+            job_id=job_id,
+            total_faces_blurred=total_faces,
+            total_pii_masked=total_pii,
+            output_video_path=str(out_path),
+        )
+        report.update({
+            "detection_pii_types":                      _detection_pii_types_for_report(store),
+            "deterministic_pii_types_added":            _deterministic_pii_types_added(store),
+            "masked_pii_object_ids":                    sorted(pii_selection["selected_object_ids"]),
+            "selected_pii_category_count":              len(selected_pii_types),
+            "selected_pii_object_count":                len(pii_selection["selected_object_ids"]),
+            "total_pii_candidates_detected":            len(store.pii_candidates),
+            "colored_mask_enabled":                     colored_preview_enabled,
+            "colored_mask_preview_enabled":             colored_preview_enabled,
+            "mask_preview_max_side":                    settings.MASK_PREVIEW_MAX_SIDE if colored_preview_enabled else None,
+            "debug_mask_overlay_enabled":               False,
+            "sam3_video_tracking_enabled":              False,
+            "temporal_mask_cache_enabled":              False,
+            "temporal_mask_interpolation_enabled":      use_keyframe_interpolation,
             "lowres_sam3_keyframe_interpolation_enabled": use_keyframe_interpolation,
             **masking_stats,
             "mask_colors": {
@@ -549,12 +556,9 @@ def run_masking_phase(job_id: str) -> None:
                 for k in ["face", *selected_pii_types]
                 if k in MASK_COLOR_HEX
             } if colored_preview_enabled else {},
-            "output_video_path": str(out_path),
             "mask_preview_video_path": str(preview_path) if preview_path is not None else None,
-        }
-        (out_dir / "report.json").write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        })
+        write_report(report, str(out_path))
         store.report = report
 
         store.status = "done"
