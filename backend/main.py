@@ -15,6 +15,7 @@ import numpy as np
 from .agent.job_store import get_store, list_stores
 from .agent.pipeline import run_detection_phase, run_masking_phase
 from .agent.profile_store import delete_profile, get_profile, list_profiles, save_profile
+from .agent.report_builder import build_final_report, write_report
 from .config import settings
 from .models.sam3_loader import get_load_error, is_available, load_sam3
 from .schemas import (
@@ -33,7 +34,7 @@ app = FastAPI(title="SafeVlog3 API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -119,9 +120,11 @@ def get_candidates(job_id: str):
                 "pii_type":      p.pii_type,
                 "thumbnail_url": f"/thumbnails/{job_id}/thumbnails/{p.thumbnail}",
                 "confidence":    p.confidence,
+                "frame_index":   p.frame_index,
             }
             for p in store.pii_candidates
         ],
+        scene_analysis=store.scene_analysis or None,
     )
 
 
@@ -138,14 +141,28 @@ def skip_job(job_id: str):
     if store.status != "awaiting_selection":
         raise HTTPException(400, f"현재 상태({store.status})에서는 스킵할 수 없습니다")
     store.output_video_path = store.video_path
-    store.report = {
-        "job_id":             job_id,
-        "scene_type":         store.scene_type,
-        "skipped":            True,
-        "total_people_detected": len(store.face_clusters),
-        "total_faces_blurred":   0,
-        "total_pii_masked":      0,
-    }
+    store.mask_preview_video_path = None
+    store.mask_preview_frames_dir = None
+    store.report = build_final_report(
+        store=store,
+        job_id=job_id,
+        total_faces_blurred=0,
+        total_pii_masked=0,
+        output_video_path=store.video_path,
+        skipped=True,
+    )
+    store.report.update({
+        "detection_pii_types":           store.detection_pii_types or [],
+        "deterministic_pii_types_added": store.deterministic_pii_types_added or [],
+        "masked_pii_object_ids":         [],
+        "selected_pii_object_count":     0,
+        "colored_mask_enabled":          False,
+        "colored_mask_preview_enabled":  False,
+        "debug_mask_overlay_enabled":    False,
+        "mask_preview_video_path":       None,
+        "mask_colors":                   {},
+    })
+    write_report(store.report, store.video_path)
     store.status = "done"
     write_status(job_id, "done")
     return {"message": "편집 없이 완료"}
@@ -161,7 +178,8 @@ def submit_selection(
     if store.status != "awaiting_selection":
         raise HTTPException(400, f"현재 상태({store.status})에서는 선택할 수 없습니다")
     store.protected_face_cluster_ids = body.protected_face_cluster_ids
-    store.masked_pii_types = body.masked_pii_types
+    store.masked_pii_object_ids = list(dict.fromkeys(body.masked_pii_object_ids or []))
+    store.masked_pii_types = list(dict.fromkeys(body.masked_pii_types))
     background_tasks.add_task(run_masking_phase, job_id)
     return {"message": "마스킹을 시작합니다"}
 
@@ -280,3 +298,14 @@ def download(job_id: str):
     if not store.output_video_path:
         raise HTTPException(404, "결과 영상이 없습니다")
     return FileResponse(store.output_video_path, media_type="video/mp4", filename="output.mp4")
+
+@app.get("/api/jobs/{job_id}/mask-preview")
+def mask_preview(job_id: str):
+    store = get_store(job_id)
+    if not store.mask_preview_video_path:
+        raise HTTPException(404, "Colored mask preview video is not available")
+    return FileResponse(
+        store.mask_preview_video_path,
+        media_type="video/mp4",
+        filename="mask-preview.mp4",
+    )

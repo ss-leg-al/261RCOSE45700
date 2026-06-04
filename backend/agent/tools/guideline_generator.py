@@ -16,6 +16,7 @@ _PROMPT = """\
 - 등장 횟수가 적은 인물 (방문자/불특정인 — 보호 여부 확인 필요)
 - 신뢰도가 낮은 PII 탐지 (수동 확인 권장)
 - 씬 유형에 따른 특이 리스크 (회의실의 화면, 의료 씬의 문서 등)
+- 차량/도로/주차장 씬의 번호판 노출 리스크
 - 탐지 결과의 이상 패턴
 
 JSON으로만 응답하세요:
@@ -43,7 +44,12 @@ def generate_guideline(
         for fc in face_clusters
     ]
     pii_summary = [
-        {"type": p.pii_type, "confidence": round(p.confidence, 2)}
+        {
+            "object_id": p.object_id,
+            "type": p.pii_type,
+            "confidence": round(p.confidence, 2),
+            "frame_index": p.frame_index,
+        }
         for p in pii_candidates
     ]
     detection_summary = json.dumps(

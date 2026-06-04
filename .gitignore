@@ -18,7 +18,7 @@ env/
 .env
 .env.local
 .env.*.local
-
+.omx
 # Model weights / checkpoints (too large for git)
 checkpoints/
 *.pt
@@ -58,3 +58,6 @@ Thumbs.db
 # Profile store
 profiles/
 *.profile.json
+
+# Local-only benchmark/test code
+local_benchmarks/

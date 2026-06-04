@@ -12,7 +12,7 @@ const STATUS_META = {
 };
 
 const SCENE_LABEL = {
-  meeting: "회의", lecture: "강의", interview: "인터뷰", public: "공공", other: "기타",
+  meeting: "회의", lecture: "강의", interview: "인터뷰", public: "공공", vehicle: "자동차", other: "기타",
 };
 
 export default function Sidebar({ activeJobId, activeStep, onSelectJob, onNewJob }) {

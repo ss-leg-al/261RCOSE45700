@@ -36,6 +36,19 @@ _TEXT_PROMPTS = {
         "driver license",
         "passport",
     ),
+    "license_plate": (
+        "license plate",
+        "vehicle registration plate",
+        "car number plate",
+    ),
+    "brand_logo": (
+        "product logo",
+        "logo on product",
+        "trademark logo",
+        "product trademark",
+        "branded product label",
+        "brand mark on package",
+    ),
 }
 
 _DEDUP_IOU_THRESHOLD = 0.5
@@ -46,6 +59,8 @@ MASK_STRATEGY = {
     "screen":    "pixelate",
     "nameplate": "blackbox",
     "id_card":   "blackbox",
+    "license_plate": "blackbox",
+    "brand_logo": "ambient_fill",
 }
 
 
@@ -53,11 +68,17 @@ def detect_pii(
     image_path: str,
     pii_types: list[str],
     conf_threshold: float = 0.3,
+    include_binary_mask: bool = False,
 ) -> list[dict]:
     """Detect PII objects with SAM3 text prompts.
 
     Returns list of:
       {type, polygon, bbox_xyxy, bbox_xywh, confidence, mask_strategy}
+
+    If ``include_binary_mask`` is true, each result also carries the low-level
+    ``binary_mask`` numpy array used to derive ``polygon``. The default remains
+    false because API/report callers should not receive large non-serializable
+    arrays.
     """
     import torch
     from ...models.sam3_loader import get_sam3_processor
@@ -95,15 +116,19 @@ def detect_pii(
                         continue
                     x1, y1, x2, y2 = (int(v) for v in boxes_np[i])
                     x1, y1 = max(0, x1), max(0, y1)
-                    polygon = _mask_to_polygon((masks_np[i, 0] > 0.5).astype(np.uint8) * 255)
-                    results.append({
+                    binary_mask = (masks_np[i, 0] > 0.5).astype(np.uint8) * 255
+                    polygon = _mask_to_polygon(binary_mask)
+                    result = {
                         "type":          pii_type,
                         "polygon":       polygon,
                         "bbox_xyxy":     [x1, y1, x2, y2],
                         "bbox_xywh":     [x1, y1, max(1, x2 - x1), max(1, y2 - y1)],
                         "confidence":    conf,
                         "mask_strategy": MASK_STRATEGY.get(pii_type, "blackbox"),
-                    })
+                    }
+                    if include_binary_mask:
+                        result["binary_mask"] = binary_mask
+                    results.append(result)
     return _dedupe_detections(results)
 
 
