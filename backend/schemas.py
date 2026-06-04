@@ -36,6 +36,7 @@ class CandidatesResponse(BaseModel):
     scene_type: str
     face_clusters: list[FaceClusterItem]
     pii_candidates: list[PIICandidateItem]
+    scene_analysis: dict | None = None
 
 
 class GuidelineItem(BaseModel):
