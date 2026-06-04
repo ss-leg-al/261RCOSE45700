@@ -9,14 +9,19 @@ class FaceCluster:
     cluster_id: int
     thumbnail: str   # filename under uploads/{job_id}/thumbnails/
     count: int       # number of detections in this cluster
+    frame_index: int | None = None
+    bbox_xyxy: list[float] | None = None
 
 
 @dataclass
 class PIICandidate:
     object_id: int
-    pii_type: str    # document | screen | nameplate | id_card
+    pii_type: str    # document | screen | nameplate | id_card | license_plate
     thumbnail: str   # filename under uploads/{job_id}/thumbnails/
     confidence: float
+    frame_index: int | None = None
+    bbox_xyxy: list[float] | None = None
+    mask_strategy: str | None = None
 
 
 @dataclass
@@ -44,13 +49,16 @@ class JobStore:
     # User selection
     protected_face_cluster_ids: list[int] = field(default_factory=list)
     masked_pii_types: list[str] = field(default_factory=list)
+    masked_pii_object_ids: list[int] = field(default_factory=list)
 
     # Guideline (generated after Phase 1)
     guideline: list[dict] = field(default_factory=list)
 
     # Output
     masked_frames_dir: str | None = None
+    mask_preview_frames_dir: str | None = None
     output_video_path: str | None = None
+    mask_preview_video_path: str | None = None
     report: dict | None = None
     total_faces_blurred: int = 0
     total_pii_masked: int = 0

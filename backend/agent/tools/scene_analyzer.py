@@ -7,16 +7,19 @@ from openai import OpenAI
 
 from ...config import settings
 
-_PII_TYPES = {"face", "document", "screen", "nameplate", "id_card"}
+_PII_TYPES = {"face", "document", "screen", "nameplate", "id_card", "license_plate"}
 
 _PROMPT = (
     "You are a privacy analysis agent. Given a video frame, identify the scene type "
     "and privacy-sensitive objects likely present.\n"
     "Respond ONLY as JSON:\n"
-    '{"scene_type": "meeting|lecture|interview|public|other", '
-    '"expected_pii": ["face","document","screen","nameplate","id_card"], '
+    '{"scene_type": "meeting|lecture|interview|public|vehicle|other", '
+    '"expected_pii": ["face","document","screen","nameplate","id_card","license_plate"], '
     '"reasoning": "..."}\n'
-    "Only include PII types that are actually visible or highly likely in this scene."
+    "Use scene_type=vehicle for dashcam, parking lot, street-driving, in-car, "
+    "or car-walkaround footage. Include license_plate when a vehicle plate is "
+    "visible or highly likely. Only include PII types that are actually visible "
+    "or highly likely in this scene."
 )
 
 

@@ -33,7 +33,7 @@ app = FastAPI(title="SafeVlog3 API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -119,6 +119,7 @@ def get_candidates(job_id: str):
                 "pii_type":      p.pii_type,
                 "thumbnail_url": f"/thumbnails/{job_id}/thumbnails/{p.thumbnail}",
                 "confidence":    p.confidence,
+                "frame_index":   p.frame_index,
             }
             for p in store.pii_candidates
         ],
@@ -138,6 +139,8 @@ def skip_job(job_id: str):
     if store.status != "awaiting_selection":
         raise HTTPException(400, f"현재 상태({store.status})에서는 스킵할 수 없습니다")
     store.output_video_path = store.video_path
+    store.mask_preview_video_path = None
+    store.mask_preview_frames_dir = None
     store.report = {
         "job_id":             job_id,
         "scene_type":         store.scene_type,
@@ -145,6 +148,14 @@ def skip_job(job_id: str):
         "total_people_detected": len(store.face_clusters),
         "total_faces_blurred":   0,
         "total_pii_masked":      0,
+        "masked_pii_types":      [],
+        "masked_pii_object_ids": [],
+        "selected_pii_object_count": 0,
+        "colored_mask_enabled":  False,
+        "colored_mask_preview_enabled": False,
+        "debug_mask_overlay_enabled": False,
+        "mask_preview_video_path": None,
+        "mask_colors": {},
     }
     store.status = "done"
     write_status(job_id, "done")
@@ -161,7 +172,8 @@ def submit_selection(
     if store.status != "awaiting_selection":
         raise HTTPException(400, f"현재 상태({store.status})에서는 선택할 수 없습니다")
     store.protected_face_cluster_ids = body.protected_face_cluster_ids
-    store.masked_pii_types = body.masked_pii_types
+    store.masked_pii_object_ids = list(dict.fromkeys(body.masked_pii_object_ids or []))
+    store.masked_pii_types = list(dict.fromkeys(body.masked_pii_types))
     background_tasks.add_task(run_masking_phase, job_id)
     return {"message": "마스킹을 시작합니다"}
 
@@ -280,3 +292,14 @@ def download(job_id: str):
     if not store.output_video_path:
         raise HTTPException(404, "결과 영상이 없습니다")
     return FileResponse(store.output_video_path, media_type="video/mp4", filename="output.mp4")
+
+@app.get("/api/jobs/{job_id}/mask-preview")
+def mask_preview(job_id: str):
+    store = get_store(job_id)
+    if not store.mask_preview_video_path:
+        raise HTTPException(404, "Colored mask preview video is not available")
+    return FileResponse(
+        store.mask_preview_video_path,
+        media_type="video/mp4",
+        filename="mask-preview.mp4",
+    )

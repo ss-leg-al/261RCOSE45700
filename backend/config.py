@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     SCENE_ANALYSIS_FRAMES: int = 5   # number of frames to sample for GPT-4o scene analysis
     FACE_SIMILARITY_THRESHOLD: float = 0.55
     SAM3_CONFIDENCE_THRESHOLD: float = 0.3
+    SAM3_MASK_INTERPOLATION_ENABLED: bool = True
+    SAM3_MASK_LOWRES_MAX_SIDE: int = 960
+    SAM3_MASK_KEYFRAME_INTERVAL: int = 3
+    SAM3_MASK_DILATE_PX: int = 24
+    MASK_PREVIEW_MAX_SIDE: int = 960
+    DEBUG_MASK_OVERLAY: bool = False
     UPLOAD_DIR: str = "uploads"
     OUTPUT_DIR: str = "outputs"
     SAM3_CHECKPOINT: str = "checkpoints/sam3.pt"

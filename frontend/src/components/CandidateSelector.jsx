@@ -5,6 +5,7 @@ const PII_LABEL = {
   screen:    "화면/스크린",
   nameplate: "명패",
   id_card:   "신분증",
+  license_plate: "번호판",
 };
 
 export default function CandidateSelector({ candidates, onSubmit }) {
@@ -135,7 +136,7 @@ export default function CandidateSelector({ candidates, onSubmit }) {
                           key={p.object_id}
                           src={p.thumbnail_url}
                           alt={p.pii_type}
-                          className={`h-16 w-24 object-cover rounded-lg border ${
+                          className={`h-20 w-32 object-cover rounded-lg border ${
                             masked ? "border-orange-600/40" : "border-gray-700 opacity-40"
                           }`}
                         />

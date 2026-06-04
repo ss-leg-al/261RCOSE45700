@@ -7,15 +7,13 @@ API:
     masks  = output["masks"]   # torch.Tensor [N, 1, H, W]
     boxes  = output["boxes"]   # torch.Tensor [N, 4] xyxy
     scores = output["scores"]  # torch.Tensor [N]
-
-Call sites must wrap inference with:
-    with torch.autocast("cuda", dtype=torch.bfloat16): ...
-(autocast is thread-local — cannot be entered once at startup)
 """
 from __future__ import annotations
 
 import logging
 from pathlib import Path
+
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +23,10 @@ _load_error: str | None = None
 
 
 def is_available() -> bool:
-    return _processor is not None
+    """Return whether the SAM3 image model is loaded or loadable."""
+    return _processor is not None or (
+        _load_error is None and Path(settings.SAM3_CHECKPOINT).exists()
+    )
 
 
 def get_load_error() -> str | None:
@@ -83,6 +84,8 @@ def load_sam3(checkpoint: str = "checkpoints/sam3.pt"):
 
 
 def get_sam3_processor():
+    if _processor is None:
+        load_sam3(settings.SAM3_CHECKPOINT)
     if _processor is None:
         raise RuntimeError(_load_error or "SAM3 not loaded. Call load_sam3() first.")
     return _processor

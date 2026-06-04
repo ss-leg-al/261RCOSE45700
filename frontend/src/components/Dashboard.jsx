@@ -12,7 +12,7 @@ const STATUS_LABEL = {
 };
 
 const SCENE_LABEL = {
-  meeting: "회의", lecture: "강의", interview: "인터뷰", public: "공공장소", other: "기타",
+  meeting: "회의", lecture: "강의", interview: "인터뷰", public: "공공장소", vehicle: "자동차/도로", other: "기타",
 };
 
 export default function Dashboard({ onSelectJob, onNewJob }) {
