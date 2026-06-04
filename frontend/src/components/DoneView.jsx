@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 
 const PII_LABEL = {
-  document: "문서", screen: "화면", nameplate: "명패", id_card: "신분증", license_plate: "번호판",
+  document: "문서", screen: "화면", nameplate: "명패", id_card: "신분증", license_plate: "번호판", brand_logo: "상품 로고/상표",
 };
 const SCENE_LABEL = {
   meeting: "회의", lecture: "강의", interview: "인터뷰", public: "공공장소", vehicle: "자동차/도로", other: "기타",
@@ -277,6 +277,12 @@ function ReportTab({ report }) {
   const isSkipped      = report.skipped === true;
   const protectedCount = report.protected_face_cluster_ids?.length ?? 0;
   const maskedPiiTypes = (report.masked_pii_types ?? []).map((t) => PII_LABEL[t] ?? t);
+  const detectionPiiTypes = report.detection_pii_types ?? report.expected_pii ?? [];
+  const detectionPiiLabels = detectionPiiTypes.map((t) => PII_LABEL[t] ?? t);
+  const deterministicPiiLabels = (report.deterministic_pii_types_added ?? []).map((t) => PII_LABEL[t] ?? t);
+  const detectionPiiSub = deterministicPiiLabels.length > 0
+    ? `자동 추가: ${deterministicPiiLabels.join(", ")}`
+    : (report.detection_pii_types ? "AI 예측 + 자동 탐지 범위" : "AI 사전 예측 항목");
   const totalPeople    = report.total_people_detected ?? 0;
   const blurredPeople  = totalPeople - protectedCount;
   const selectedPiiCategoryCount = report.selected_pii_category_count ?? maskedPiiTypes.length;
@@ -322,9 +328,9 @@ function ReportTab({ report }) {
       color: "#f59e0b",
     },
     {
-      label: "감지된 PII 유형",
-      value: (report.expected_pii ?? []).map((t) => PII_LABEL[t] ?? t).join(", ") || "없음",
-      sub: "AI 사전 예측 항목",
+      label: "탐지 대상 PII 유형",
+      value: detectionPiiLabels.length > 0 ? detectionPiiLabels.join(", ") : "없음",
+      sub: detectionPiiSub,
       color: "#06b6d4",
     },
     {

@@ -11,7 +11,8 @@ from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
 
 from backend.agent.job_store import PIICandidate, get_store, reset_store
-from backend.agent.tools.masker import apply_polygon_mask
+from backend.agent.tools.masker import apply_binary_mask, apply_polygon_mask
+from backend.agent.tools import sam3_engine
 from backend.main import app, submit_selection
 from backend.schemas import SelectionRequest
 from backend.agent import pipeline
@@ -39,6 +40,116 @@ class MaskingContractTests(unittest.TestCase):
 
         self.assertEqual(store.masked_pii_types, ["document"])
         self.assertEqual(store.masked_pii_object_ids, [0, 2])
+
+    def test_brand_logo_uses_product_logo_prompts_and_ambient_fill(self) -> None:
+        prompts = sam3_engine._TEXT_PROMPTS["brand_logo"]
+
+        self.assertEqual(sam3_engine.MASK_STRATEGY["brand_logo"], "ambient_fill")
+        self.assertIn("product logo", prompts)
+        self.assertIn("product trademark", prompts)
+        self.assertNotIn("company logo", prompts)
+        self.assertNotIn("branded sign", prompts)
+
+    def test_detection_phase_discovers_brand_logo_candidates_by_default(self) -> None:
+        job_id = "unit-brand-logo-detection"
+        reset_store(job_id)
+        store = get_store(job_id)
+        store.video_path = "input.mp4"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_upload = pipeline.settings.UPLOAD_DIR
+            old_output = pipeline.settings.OUTPUT_DIR
+            old_logo_enabled = pipeline.settings.BRAND_LOGO_DETECTION_ENABLED
+            pipeline.settings.UPLOAD_DIR = str(root / "uploads")
+            pipeline.settings.OUTPUT_DIR = str(root / "outputs")
+            pipeline.settings.BRAND_LOGO_DETECTION_ENABLED = True
+            try:
+                def fake_extract_frames(_video_path, frames_dir, fps=None):
+                    frames_dir = Path(frames_dir)
+                    frames_dir.mkdir(parents=True, exist_ok=True)
+                    frame = np.full((32, 32, 3), 255, dtype=np.uint8)
+                    path = frames_dir / "frame_0000.jpg"
+                    cv2.imwrite(str(path), frame)
+                    return [path]
+
+                detect_calls: list[list[str]] = []
+
+                def fake_detect_pii(_image_path, pii_types, _threshold, include_binary_mask=False):
+                    detect_calls.append(list(pii_types))
+                    return [{
+                        "type": "brand_logo",
+                        "polygon": [[8, 8], [24, 8], [24, 24], [8, 24]],
+                        "bbox_xyxy": [8, 8, 24, 24],
+                        "confidence": 0.91,
+                        "mask_strategy": "ambient_fill",
+                    }]
+
+                with patch.object(pipeline, "get_video_fps", return_value=1.0), \
+                     patch.object(pipeline, "extract_frames", side_effect=fake_extract_frames), \
+                     patch.object(pipeline, "analyze_scene", return_value=("other", [])), \
+                     patch.object(pipeline, "sam3_available", return_value=True), \
+                     patch.object(pipeline, "detect_pii", side_effect=fake_detect_pii), \
+                     patch.object(pipeline, "detect_faces", return_value=[]), \
+                     patch.object(pipeline, "generate_guideline", return_value=[]):
+                    pipeline.run_detection_phase(job_id)
+
+                self.assertEqual(store.status, "awaiting_selection")
+                self.assertEqual(store.expected_pii, [])
+                self.assertTrue(detect_calls)
+                self.assertIn("brand_logo", detect_calls[0])
+                self.assertEqual(store.detection_pii_types, ["brand_logo"])
+                self.assertEqual(store.deterministic_pii_types_added, ["brand_logo"])
+                self.assertEqual(len(store.pii_candidates), 1)
+                self.assertEqual(store.pii_candidates[0].pii_type, "brand_logo")
+                self.assertEqual(store.pii_candidates[0].mask_strategy, "ambient_fill")
+            finally:
+                pipeline.settings.UPLOAD_DIR = old_upload
+                pipeline.settings.OUTPUT_DIR = old_output
+                pipeline.settings.BRAND_LOGO_DETECTION_ENABLED = old_logo_enabled
+
+    def test_detection_phase_preserves_empty_detection_metadata_when_logo_disabled(self) -> None:
+        job_id = "unit-brand-logo-disabled"
+        reset_store(job_id)
+        store = get_store(job_id)
+        store.video_path = "input.mp4"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_upload = pipeline.settings.UPLOAD_DIR
+            old_output = pipeline.settings.OUTPUT_DIR
+            old_logo_enabled = pipeline.settings.BRAND_LOGO_DETECTION_ENABLED
+            pipeline.settings.UPLOAD_DIR = str(root / "uploads")
+            pipeline.settings.OUTPUT_DIR = str(root / "outputs")
+            pipeline.settings.BRAND_LOGO_DETECTION_ENABLED = False
+            try:
+                def fake_extract_frames(_video_path, frames_dir, fps=None):
+                    frames_dir = Path(frames_dir)
+                    frames_dir.mkdir(parents=True, exist_ok=True)
+                    frame = np.full((32, 32, 3), 255, dtype=np.uint8)
+                    path = frames_dir / "frame_0000.jpg"
+                    cv2.imwrite(str(path), frame)
+                    return [path]
+
+                with patch.object(pipeline, "get_video_fps", return_value=1.0), \
+                     patch.object(pipeline, "extract_frames", side_effect=fake_extract_frames), \
+                     patch.object(pipeline, "analyze_scene", return_value=("other", [])), \
+                     patch.object(pipeline, "sam3_available", return_value=True), \
+                     patch.object(pipeline, "detect_pii") as detect_pii_mock, \
+                     patch.object(pipeline, "detect_faces", return_value=[]), \
+                     patch.object(pipeline, "generate_guideline", return_value=[]):
+                    pipeline.run_detection_phase(job_id)
+
+                detect_pii_mock.assert_not_called()
+                self.assertEqual(store.status, "awaiting_selection")
+                self.assertEqual(store.expected_pii, [])
+                self.assertEqual(store.detection_pii_types, [])
+                self.assertEqual(store.deterministic_pii_types_added, [])
+                self.assertEqual(store.pii_candidates, [])
+            finally:
+                pipeline.settings.UPLOAD_DIR = old_upload
+                pipeline.settings.OUTPUT_DIR = old_output
+                pipeline.settings.BRAND_LOGO_DETECTION_ENABLED = old_logo_enabled
 
     def test_keyframe_tail_detection_does_not_reuse_stale_polygon(self) -> None:
         job_id = "unit-no-stale-mask"
@@ -389,6 +500,166 @@ class MaskingContractTests(unittest.TestCase):
                 pipeline.settings.SAM3_MASK_INTERPOLATION_ENABLED = old_interpolation
                 pipeline.settings.SAM3_MASK_KEYFRAME_INTERVAL = old_interval
                 pipeline.settings.SAM3_MASK_DILATE_PX = old_dilate
+
+    def test_brand_logo_selection_masks_and_reports_colored_preview(self) -> None:
+        job_id = "unit-brand-logo-masking"
+        reset_store(job_id)
+        store = get_store(job_id)
+        store.status = "awaiting_selection"
+        store.video_path = "input.mp4"
+        store.expected_pii = []
+        store.detection_pii_types = ["brand_logo"]
+        store.deterministic_pii_types_added = ["brand_logo"]
+        store.masked_pii_types = ["brand_logo"]
+        store.masked_pii_object_ids = [0]
+        store.pii_candidates = [
+            PIICandidate(
+                0,
+                "brand_logo",
+                "logo.jpg",
+                0.95,
+                frame_index=0,
+                bbox_xyxy=[8, 8, 24, 24],
+                mask_strategy="ambient_fill",
+            )
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_upload = pipeline.settings.UPLOAD_DIR
+            old_output = pipeline.settings.OUTPUT_DIR
+            old_overlay = pipeline.settings.DEBUG_MASK_OVERLAY
+            old_interpolation = pipeline.settings.SAM3_MASK_INTERPOLATION_ENABLED
+            old_interval = pipeline.settings.SAM3_MASK_KEYFRAME_INTERVAL
+            old_dilate = pipeline.settings.SAM3_MASK_DILATE_PX
+            pipeline.settings.UPLOAD_DIR = str(root / "uploads")
+            pipeline.settings.OUTPUT_DIR = str(root / "outputs")
+            pipeline.settings.DEBUG_MASK_OVERLAY = False
+            pipeline.settings.SAM3_MASK_INTERPOLATION_ENABLED = True
+            pipeline.settings.SAM3_MASK_KEYFRAME_INTERVAL = 3
+            pipeline.settings.SAM3_MASK_DILATE_PX = 0
+            try:
+                def fake_extract_frames(_video_path, frames_dir, fps=None):
+                    frames_dir = Path(frames_dir)
+                    frames_dir.mkdir(parents=True, exist_ok=True)
+                    frame = np.full((32, 32, 3), 240, dtype=np.uint8)
+                    frame[8:24, 8:24] = np.array([0, 0, 255], dtype=np.uint8)
+                    path = frames_dir / "frame_0000.jpg"
+                    cv2.imwrite(str(path), frame)
+                    return [path]
+
+                detect_types: list[list[str]] = []
+
+                def fake_detect_pii(_image_path, pii_types, _threshold, include_binary_mask=False):
+                    detect_types.append(list(pii_types))
+                    binary_mask = np.zeros((32, 32), dtype=np.uint8)
+                    binary_mask[8:24, 8:24] = 255
+                    return [{
+                        "type": "brand_logo",
+                        "polygon": [[8, 8], [24, 8], [24, 24], [8, 24]],
+                        "bbox_xyxy": [8, 8, 24, 24],
+                        "confidence": 0.99,
+                        "mask_strategy": "ambient_fill",
+                        **({"binary_mask": binary_mask} if include_binary_mask else {}),
+                    }]
+
+                def fake_compose(_frames_dir, out_path, fps):
+                    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(out_path).write_bytes(b"fake video")
+
+                with patch.object(pipeline, "get_video_fps", return_value=1.0), \
+                     patch.object(pipeline, "extract_frames", side_effect=fake_extract_frames), \
+                     patch.object(pipeline, "compose_video", side_effect=fake_compose), \
+                     patch.object(pipeline, "sam3_available", return_value=True), \
+                     patch.object(pipeline, "detect_pii", side_effect=fake_detect_pii):
+                    pipeline.run_masking_phase(job_id)
+
+                self.assertEqual(store.status, "done")
+                self.assertEqual(detect_types, [["brand_logo"]])
+                self.assertEqual(store.report["masked_pii_types"], ["brand_logo"])
+                self.assertEqual(store.report["masked_pii_object_ids"], [0])
+                self.assertEqual(store.report["mask_colors"]["brand_logo"], "#ec4899")
+                self.assertEqual(store.report["detection_pii_types"], ["brand_logo"])
+                self.assertEqual(store.report["deterministic_pii_types_added"], ["brand_logo"])
+                self.assertEqual(store.report["total_pii_masked"], 1)
+
+                masked = cv2.imread(str(Path(store.masked_frames_dir) / "frame_0000.jpg"))
+                preview = cv2.imread(str(Path(store.mask_preview_frames_dir) / "frame_0000.jpg"))
+                self.assertGreater(int(masked[16, 16].mean()), 180)
+                self.assertFalse(np.array_equal(masked[16, 16], np.array([0, 0, 255], dtype=np.uint8)))
+                self.assertGreater(int(preview[16, 16].sum()), 40)
+            finally:
+                pipeline.settings.UPLOAD_DIR = old_upload
+                pipeline.settings.OUTPUT_DIR = old_output
+                pipeline.settings.DEBUG_MASK_OVERLAY = old_overlay
+                pipeline.settings.SAM3_MASK_INTERPOLATION_ENABLED = old_interpolation
+                pipeline.settings.SAM3_MASK_KEYFRAME_INTERVAL = old_interval
+                pipeline.settings.SAM3_MASK_DILATE_PX = old_dilate
+
+    def test_report_preserves_recorded_empty_detection_metadata(self) -> None:
+        job_id = "unit-empty-detection-metadata-report"
+        reset_store(job_id)
+        store = get_store(job_id)
+        store.status = "awaiting_selection"
+        store.video_path = "input.mp4"
+        store.expected_pii = []
+        store.detection_pii_types = []
+        store.deterministic_pii_types_added = []
+        store.masked_pii_types = []
+        store.masked_pii_object_ids = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_upload = pipeline.settings.UPLOAD_DIR
+            old_output = pipeline.settings.OUTPUT_DIR
+            old_interpolation = pipeline.settings.SAM3_MASK_INTERPOLATION_ENABLED
+            old_logo_enabled = pipeline.settings.BRAND_LOGO_DETECTION_ENABLED
+            pipeline.settings.UPLOAD_DIR = str(root / "uploads")
+            pipeline.settings.OUTPUT_DIR = str(root / "outputs")
+            pipeline.settings.SAM3_MASK_INTERPOLATION_ENABLED = True
+            pipeline.settings.BRAND_LOGO_DETECTION_ENABLED = True
+            try:
+                def fake_extract_frames(_video_path, frames_dir, fps=None):
+                    frames_dir = Path(frames_dir)
+                    frames_dir.mkdir(parents=True, exist_ok=True)
+                    frame = np.full((16, 16, 3), 255, dtype=np.uint8)
+                    path = frames_dir / "frame_0000.jpg"
+                    cv2.imwrite(str(path), frame)
+                    return [path]
+
+                def fake_compose(_frames_dir, out_path, fps):
+                    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(out_path).write_bytes(b"fake video")
+
+                with patch.object(pipeline, "get_video_fps", return_value=1.0), \
+                     patch.object(pipeline, "extract_frames", side_effect=fake_extract_frames), \
+                     patch.object(pipeline, "compose_video", side_effect=fake_compose), \
+                     patch.object(pipeline, "sam3_available", return_value=True), \
+                     patch.object(pipeline, "detect_pii") as detect_pii_mock:
+                    pipeline.run_masking_phase(job_id)
+
+                detect_pii_mock.assert_not_called()
+                self.assertEqual(store.status, "done")
+                self.assertEqual(store.report["detection_pii_types"], [])
+                self.assertEqual(store.report["deterministic_pii_types_added"], [])
+                self.assertFalse(store.report["colored_mask_enabled"])
+            finally:
+                pipeline.settings.UPLOAD_DIR = old_upload
+                pipeline.settings.OUTPUT_DIR = old_output
+                pipeline.settings.SAM3_MASK_INTERPOLATION_ENABLED = old_interpolation
+                pipeline.settings.BRAND_LOGO_DETECTION_ENABLED = old_logo_enabled
+
+    def test_ambient_fill_masks_with_surrounding_color(self) -> None:
+        img = np.full((32, 32, 3), 230, dtype=np.uint8)
+        img[10:22, 10:22] = np.array([0, 0, 255], dtype=np.uint8)
+        mask = np.zeros((32, 32), dtype=np.uint8)
+        mask[10:22, 10:22] = 255
+
+        masked = apply_binary_mask(img.copy(), mask, "ambient_fill")
+
+        self.assertGreater(int(masked[16, 16].mean()), 180)
+        self.assertFalse(np.array_equal(masked[16, 16], np.array([0, 0, 255], dtype=np.uint8)))
+        self.assertFalse(np.array_equal(masked[16, 16], np.array([0, 0, 0], dtype=np.uint8)))
 
     def test_debug_overlay_is_opt_in(self) -> None:
         polygon = [[2, 2], [12, 2], [12, 12], [2, 12]]

@@ -4,6 +4,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+_AMBIENT_FILL_STRATEGIES = {"ambient_fill", "natural_fill", "inpaint"}
+
 
 def apply_polygon_mask(
     img: np.ndarray,
@@ -33,6 +35,8 @@ def apply_polygon_mask(
         img[region] = blurred[region]
     elif strategy == "blackbox":
         img[region] = 0
+    elif strategy in _AMBIENT_FILL_STRATEGIES:
+        _apply_ambient_fill(img, mask)
     elif strategy == "pixelate":
         ys, xs = np.where(region)
         y1, y2 = int(ys.min()), int(ys.max()) + 1
@@ -81,6 +85,8 @@ def apply_binary_mask(
         img[region] = blurred[region]
     elif strategy == "blackbox":
         img[region] = 0
+    elif strategy in _AMBIENT_FILL_STRATEGIES:
+        _apply_ambient_fill(img, mask)
     elif strategy == "pixelate":
         ys, xs = np.where(region)
         y1, y2 = int(ys.min()), int(ys.max()) + 1
@@ -146,3 +152,35 @@ def _apply_colored_overlay(
     overlay[region] = color_bgr
     blended = cv2.addWeighted(overlay, alpha, img, 1.0 - alpha, 0)
     img[region] = blended[region]
+
+
+def _apply_ambient_fill(img: np.ndarray, mask: np.ndarray) -> None:
+    """Replace the mask with a surrounding-pixel fill instead of a black box.
+
+    OpenCV inpainting uses only pixels outside the mask, so product logos are
+    removed while the filled area follows nearby color/texture.  If inpainting
+    cannot run for an unusual frame type, fall back to the median color from a
+    ring around the mask rather than exposing the original pixels.
+    """
+    mask = ((mask > 0).astype(np.uint8) * 255)
+    region = mask == 255
+    if not region.any():
+        return
+
+    try:
+        filled = cv2.inpaint(img, mask, 3, cv2.INPAINT_TELEA)
+        img[region] = filled[region]
+    except cv2.error:
+        img[region] = _sample_surrounding_color(img, mask)
+
+
+def _sample_surrounding_color(img: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    h, w = mask.shape[:2]
+    kernel_side = max(3, min(31, (min(h, w) // 40) | 1))
+    kernel = np.ones((kernel_side, kernel_side), dtype=np.uint8)
+    ring = (cv2.dilate(mask, kernel, iterations=2) == 255) & (mask == 0)
+    if not ring.any():
+        ring = mask == 0
+    if not ring.any():
+        return np.zeros((img.shape[2],), dtype=img.dtype)
+    return np.median(img[ring], axis=0).astype(img.dtype)

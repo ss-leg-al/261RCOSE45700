@@ -7,6 +7,7 @@ const PII_LABEL = {
   nameplate: "명패",
   id_card: "신분증",
   license_plate: "번호판",
+  brand_logo: "상품 로고/상표",
 };
 
 const SCENE_LABEL = {

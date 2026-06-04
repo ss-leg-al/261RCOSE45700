@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     SAM3_MASK_LOWRES_MAX_SIDE: int = 960
     SAM3_MASK_KEYFRAME_INTERVAL: int = 3
     SAM3_MASK_DILATE_PX: int = 24
+    BRAND_LOGO_DETECTION_ENABLED: bool = True
     MASK_PREVIEW_MAX_SIDE: int = 960
     DEBUG_MASK_OVERLAY: bool = False
     UPLOAD_DIR: str = "uploads"
