@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     SCENE_ANALYSIS_FRAMES: int = 5   # number of frames to sample for GPT-4o scene analysis
     FACE_SIMILARITY_THRESHOLD: float = 0.55
     SAM3_CONFIDENCE_THRESHOLD: float = 0.3
+    SAM3_MODE: str = "normal"            # normal=keyframe interpolation, precision=per-frame
     SAM3_MASK_INTERPOLATION_ENABLED: bool = True
     SAM3_MASK_LOWRES_MAX_SIDE: int = 960
     SAM3_MASK_KEYFRAME_INTERVAL: int = 3

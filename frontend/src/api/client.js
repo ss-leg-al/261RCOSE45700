@@ -49,12 +49,13 @@ export const api = {
     return (await http.post(`/api/jobs/${jobId}/skip`)).data;
   },
 
-  async submitSelection(jobId, protectedFaceIds, maskedPiiTypes, maskedPiiObjectIds = []) {
+  async submitSelection(jobId, protectedFaceIds, maskedPiiTypes, maskedPiiObjectIds = [], sam3Mode = "normal") {
     return (
       await http.post(`/api/jobs/${jobId}/selection`, {
         protected_face_cluster_ids: protectedFaceIds,
         masked_pii_types: maskedPiiTypes,
         masked_pii_object_ids: maskedPiiObjectIds,
+        sam3_mode: sam3Mode,
       })
     ).data;
   },

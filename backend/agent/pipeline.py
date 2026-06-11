@@ -24,6 +24,12 @@ from .tools.face_engine import (
 from .tools.guideline_generator import generate_guideline
 from .tools.masker import apply_binary_mask, apply_polygon_mask, blur_bbox
 from .tools.sam3_engine import detect_pii
+from .tools.sam3_modes import (
+    SAM3_MODE_NORMAL,
+    normalize_sam3_mode,
+    sam3_mode_description,
+    sam3_mode_label,
+)
 from .tools.scene_analyzer import analyze_scene
 from .tools.temporal_masks import (
     dilate_binary_mask,
@@ -424,6 +430,10 @@ def _find_sam3_face(
     return best if best_iou > 0.3 else None
 
 
+def _active_sam3_mode(store) -> str:
+    return normalize_sam3_mode(getattr(store, "sam3_mode", None) or settings.SAM3_MODE)
+
+
 
 # ---------------------------------------------------------------------------
 # Phase 2 — Per-frame masking
@@ -463,8 +473,11 @@ def run_masking_phase(job_id: str) -> None:
         pii_types_to_detect += selected_pii_types
         colored_preview_enabled = bool(pii_types_to_detect)
 
+        sam3_mode = _active_sam3_mode(store)
+        store.sam3_mode = sam3_mode
         use_keyframe_interpolation = (
-            bool(settings.SAM3_MASK_INTERPOLATION_ENABLED)
+            sam3_mode == SAM3_MODE_NORMAL
+            and bool(settings.SAM3_MASK_INTERPOLATION_ENABLED)
             and sam3_available()
             and bool(pii_types_to_detect)
         )
@@ -474,7 +487,8 @@ def run_masking_phase(job_id: str) -> None:
                 "step": "mask",
                 "message": (
                     f"{len(frames)}개 프레임 low-res SAM3 keyframe 보간 마스킹 시작 "
-                    f"({native_fps:.2f}fps, {settings.SAM3_MASK_KEYFRAME_INTERVAL}프레임 간격)"
+                    f"({native_fps:.2f}fps, {settings.SAM3_MASK_KEYFRAME_INTERVAL}프레임 간격, "
+                    f"sam3-mode={sam3_mode_label(sam3_mode)})"
                 ),
             })
             total_faces, total_pii, masking_stats = _mask_frames_with_keyframe_interpolation(
@@ -491,7 +505,10 @@ def run_masking_phase(job_id: str) -> None:
         else:
             emit_log(job_id, {
                 "step": "mask",
-                "message": f"{len(frames)}개 프레임 per-frame SAM3 마스킹 시작 ({native_fps:.2f}fps)",
+                "message": (
+                    f"{len(frames)}개 프레임 per-frame SAM3 마스킹 시작 "
+                    f"({native_fps:.2f}fps, sam3-mode={sam3_mode_label(sam3_mode)})"
+                ),
             })
             total_faces, total_pii, masking_stats = _mask_frames_per_frame(
                 job_id=job_id,
@@ -546,6 +563,12 @@ def run_masking_phase(job_id: str) -> None:
             "colored_mask_preview_enabled":             colored_preview_enabled,
             "mask_preview_max_side":                    settings.MASK_PREVIEW_MAX_SIDE if colored_preview_enabled else None,
             "debug_mask_overlay_enabled":               False,
+            "sam3_mode":                                sam3_mode,
+            "sam3_mode_label":                          sam3_mode_label(sam3_mode),
+            "sam3_mode_description":                    sam3_mode_description(
+                sam3_mode,
+                settings.SAM3_MASK_KEYFRAME_INTERVAL,
+            ),
             "sam3_video_tracking_enabled":              False,
             "temporal_mask_cache_enabled":              False,
             "temporal_mask_interpolation_enabled":      use_keyframe_interpolation,

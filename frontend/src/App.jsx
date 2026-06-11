@@ -81,9 +81,9 @@ export default function App() {
     setState((s) => ({ ...s, step: "done" }));
   }
 
-  async function handleSelection(protectedFaceIds, maskedPiiTypes, maskedPiiObjectIds = []) {
+  async function handleSelection(protectedFaceIds, maskedPiiTypes, maskedPiiObjectIds = [], sam3Mode = "normal") {
     setState((s) => ({ ...s, step: "masking" }));
-    await api.submitSelection(state.jobId, protectedFaceIds, maskedPiiTypes, maskedPiiObjectIds);
+    await api.submitSelection(state.jobId, protectedFaceIds, maskedPiiTypes, maskedPiiObjectIds, sam3Mode);
   }
 
   const { step, jobId, candidates, guideline, error } = state;

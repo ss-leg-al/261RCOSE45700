@@ -293,6 +293,12 @@ function ReportTab({ report }) {
   const selectedPiiCategoryCount = report.selected_pii_category_count ?? maskedPiiTypes.length;
   const selectedPiiObjectCount = report.selected_pii_object_count ?? report.masked_pii_object_ids?.length ?? 0;
   const totalPiiCandidateCount = report.total_pii_candidates_detected ?? 0;
+  const sam3ModeLabel = report.sam3_mode_label ?? (report.sam3_mode === "precision" ? "정밀" : "보통");
+  const sam3ModeSub = report.sam3_mode_description ?? (
+    report.sam3_mode === "precision"
+      ? "모든 프레임 segmentation"
+      : "3프레임 간격 segmentation + 보간"
+  );
 
   const cards = isSkipped ? [
     {
@@ -345,6 +351,12 @@ function ReportTab({ report }) {
         ? `후보 예시 ${totalPiiCandidateCount}개 중 개별 선택`
         : `후보 예시 ${totalPiiCandidateCount}개 기준`,
       color: "#f97316",
+    },
+    {
+      label: "SAM3 마스킹 모드",
+      value: sam3ModeLabel,
+      sub: sam3ModeSub,
+      color: "#60a5fa",
     },
     {
       label: "컬러 마스크 미리보기",
