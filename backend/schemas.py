@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class JobCreated(BaseModel):
@@ -50,9 +50,15 @@ class GuidelineResponse(BaseModel):
 
 
 class SelectionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     protected_face_cluster_ids: list[int]
     masked_pii_types: list[str]
     masked_pii_object_ids: list[int] | None = None
+    sam3_mode: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("sam3_mode", "sam3-mode", "sam_mask_mode"),
+    )
 
 
 class ProfileSummary(BaseModel):

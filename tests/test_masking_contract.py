@@ -40,6 +40,24 @@ class MaskingContractTests(unittest.TestCase):
 
         self.assertEqual(store.masked_pii_types, ["document"])
         self.assertEqual(store.masked_pii_object_ids, [0, 2])
+        self.assertEqual(store.sam3_mode, "normal")
+
+    def test_selection_accepts_sam3_mode_aliases(self) -> None:
+        job_id = "unit-selection-sam3-mode"
+        reset_store(job_id)
+        store = get_store(job_id)
+        store.status = "awaiting_selection"
+
+        body = SelectionRequest.model_validate({
+            "protected_face_cluster_ids": [],
+            "masked_pii_types": ["document"],
+            "masked_pii_object_ids": [],
+            "sam3-mode": "정밀",
+        })
+
+        submit_selection(job_id, body, BackgroundTasks())
+
+        self.assertEqual(store.sam3_mode, "precision")
 
     def test_brand_logo_uses_product_logo_prompts_and_ambient_fill(self) -> None:
         prompts = sam3_engine._TEXT_PROMPTS["brand_logo"]
@@ -309,6 +327,88 @@ class MaskingContractTests(unittest.TestCase):
                 self.assertLess(int(middle_2[14, 14].mean()), 32)
                 self.assertEqual(store.report["sam3_mask_keyframes_detected"], 2)
                 self.assertEqual(store.report["sam3_mask_keyframe_interval"], 3)
+            finally:
+                pipeline.settings.UPLOAD_DIR = old_upload
+                pipeline.settings.OUTPUT_DIR = old_output
+                pipeline.settings.DEBUG_MASK_OVERLAY = old_overlay
+                pipeline.settings.SAM3_MASK_INTERPOLATION_ENABLED = old_interpolation
+                pipeline.settings.SAM3_MASK_KEYFRAME_INTERVAL = old_interval
+                pipeline.settings.SAM3_MASK_DILATE_PX = old_dilate
+
+    def test_precision_sam3_mode_segments_every_frame(self) -> None:
+        job_id = "unit-precision-sam3-mode"
+        reset_store(job_id)
+        store = get_store(job_id)
+        store.status = "awaiting_selection"
+        store.video_path = "input.mp4"
+        store.expected_pii = ["document"]
+        store.masked_pii_types = ["document"]
+        store.sam3_mode = "precision"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_upload = pipeline.settings.UPLOAD_DIR
+            old_output = pipeline.settings.OUTPUT_DIR
+            old_overlay = pipeline.settings.DEBUG_MASK_OVERLAY
+            old_interpolation = pipeline.settings.SAM3_MASK_INTERPOLATION_ENABLED
+            old_interval = pipeline.settings.SAM3_MASK_KEYFRAME_INTERVAL
+            old_dilate = pipeline.settings.SAM3_MASK_DILATE_PX
+            pipeline.settings.UPLOAD_DIR = str(root / "uploads")
+            pipeline.settings.OUTPUT_DIR = str(root / "outputs")
+            pipeline.settings.DEBUG_MASK_OVERLAY = False
+            pipeline.settings.SAM3_MASK_INTERPOLATION_ENABLED = True
+            pipeline.settings.SAM3_MASK_KEYFRAME_INTERVAL = 3
+            pipeline.settings.SAM3_MASK_DILATE_PX = 0
+            try:
+                def fake_extract_frames(_video_path, frames_dir, fps=None):
+                    frames_dir = Path(frames_dir)
+                    frames_dir.mkdir(parents=True, exist_ok=True)
+                    frames = []
+                    for index in range(4):
+                        frame = np.full((32, 32, 3), 255, dtype=np.uint8)
+                        path = frames_dir / f"frame_{index:04d}.jpg"
+                        cv2.imwrite(str(path), frame)
+                        frames.append(path)
+                    return frames
+
+                detect_calls: list[str] = []
+
+                def fake_detect_pii(image_path, _types, _threshold, include_binary_mask=False):
+                    name = Path(image_path).name
+                    detect_calls.append(name)
+                    binary_mask = np.zeros((32, 32), dtype=np.uint8)
+                    binary_mask[8:16, 8:16] = 255
+                    return [{
+                        "type": "document",
+                        "polygon": [[8, 8], [16, 8], [16, 16], [8, 16]],
+                        "bbox_xyxy": [8, 8, 16, 16],
+                        "confidence": 0.99,
+                        "mask_strategy": "blackbox",
+                        **({"binary_mask": binary_mask} if include_binary_mask else {}),
+                    }]
+
+                def fake_compose(_frames_dir, out_path, fps):
+                    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(out_path).write_bytes(b"fake video")
+
+                with patch.object(pipeline, "get_video_fps", return_value=1.0), \
+                     patch.object(pipeline, "extract_frames", side_effect=fake_extract_frames), \
+                     patch.object(pipeline, "compose_video", side_effect=fake_compose), \
+                     patch.object(pipeline, "sam3_available", return_value=True), \
+                     patch.object(pipeline, "detect_pii", side_effect=fake_detect_pii):
+                    pipeline.run_masking_phase(job_id)
+
+                self.assertEqual(detect_calls, [
+                    "frame_0000.jpg",
+                    "frame_0001.jpg",
+                    "frame_0002.jpg",
+                    "frame_0003.jpg",
+                ])
+                self.assertEqual(store.report["sam3_mode"], "precision")
+                self.assertEqual(store.report["sam3_mode_label"], "정밀")
+                self.assertFalse(store.report["temporal_mask_interpolation_enabled"])
+                self.assertEqual(store.report["sam3_mask_keyframe_interval"], 1)
+                self.assertEqual(store.report["sam3_mask_keyframes_detected"], 4)
             finally:
                 pipeline.settings.UPLOAD_DIR = old_upload
                 pipeline.settings.OUTPUT_DIR = old_output

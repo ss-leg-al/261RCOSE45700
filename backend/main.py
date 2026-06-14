@@ -16,6 +16,7 @@ from .agent.job_store import get_store, list_stores
 from .agent.pipeline import run_detection_phase, run_masking_phase
 from .agent.profile_store import delete_profile, get_profile, list_profiles, save_profile
 from .agent.report_builder import build_final_report, write_report
+from .agent.tools.sam3_modes import normalize_sam3_mode
 from .config import settings
 from .models.sam3_loader import get_load_error, is_available, load_sam3
 from .schemas import (
@@ -180,6 +181,10 @@ def submit_selection(
     store.protected_face_cluster_ids = body.protected_face_cluster_ids
     store.masked_pii_object_ids = list(dict.fromkeys(body.masked_pii_object_ids or []))
     store.masked_pii_types = list(dict.fromkeys(body.masked_pii_types))
+    try:
+        store.sam3_mode = normalize_sam3_mode(body.sam3_mode or settings.SAM3_MODE)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     background_tasks.add_task(run_masking_phase, job_id)
     return {"message": "마스킹을 시작합니다"}
 
