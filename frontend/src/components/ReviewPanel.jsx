@@ -31,6 +31,7 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
   const [applyingProfile, setApplyingProfile] = useState(false);
   const [profileResult, setProfileResult]     = useState(null); // null | ApplyProfileResponse
   const [profileFaces, setProfileFaces]       = useState(new Set()); // cluster IDs matched by profile
+  const [sam3Mode, setSam3Mode]               = useState("normal");
   const dropdownRef = useRef();
 
   const selectedPiiTypes = [
@@ -113,7 +114,7 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
   }
 
   function submitSelection() {
-    onSubmit([...protectedFaces], selectedPiiTypes, selectedPiiObjectIds);
+    onSubmit([...protectedFaces], selectedPiiTypes, selectedPiiObjectIds, sam3Mode);
   }
 
   const warnings = guideline.filter((g) => g.level === "warning");
@@ -342,6 +343,83 @@ export default function ReviewPanel({ candidates, guideline, onSubmit, onSkip, j
 
         {/* RIGHT — Selection */}
         <div className="flex-1 min-w-0 overflow-y-auto space-y-5">
+
+          {/* SAM3 temporal mode */}
+          <section
+            className="rounded-2xl p-5"
+            style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+          >
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h3 className="font-semibold text-sm" style={{ color: "var(--text)" }}>
+                  SAM3 마스킹 모드
+                </h3>
+                <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
+                  보통은 3프레임 간격으로 segmentation 후 보간하고, 정밀은 모든 프레임을 segmentation합니다.
+                </p>
+              </div>
+              <span
+                className="text-[11px] px-2 py-1 rounded-full"
+                style={{
+                  color: "#93c5fd",
+                  background: "rgba(59,130,246,0.12)",
+                  border: "1px solid rgba(59,130,246,0.24)",
+                }}
+              >
+                sam3-mode
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                {
+                  mode: "normal",
+                  title: "보통",
+                  badge: "3프레임 보간",
+                  desc: "빠른 처리 · 현재 기본 방식",
+                },
+                {
+                  mode: "precision",
+                  title: "정밀",
+                  badge: "전체 프레임",
+                  desc: "느리지만 프레임별 segmentation",
+                },
+              ].map((option) => {
+                const selected = sam3Mode === option.mode;
+                return (
+                  <button
+                    key={option.mode}
+                    type="button"
+                    onClick={() => setSam3Mode(option.mode)}
+                    className="rounded-xl p-3 text-left transition-all"
+                    style={selected ? {
+                      background: "rgba(59,130,246,0.12)",
+                      border: "1px solid rgba(59,130,246,0.45)",
+                      boxShadow: "0 0 0 2px rgba(59,130,246,0.12)",
+                    } : {
+                      background: "rgba(255,255,255,0.03)",
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-bold" style={{ color: selected ? "#bfdbfe" : "var(--text)" }}>
+                        {option.title}
+                      </span>
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded"
+                        style={{
+                          color: selected ? "#93c5fd" : "var(--muted)",
+                          background: "rgba(255,255,255,0.05)",
+                        }}
+                      >
+                        {option.badge}
+                      </span>
+                    </div>
+                    <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>{option.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
 
           {/* Face clusters */}
           {face_clusters.length > 0 && (

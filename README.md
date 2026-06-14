@@ -206,6 +206,10 @@ cd frontend && npm run dev
 | 프로필 저장/조회/적용/삭제 | `POST /api/jobs/{id}/save-profile` · `GET /api/profiles` · `GET /api/jobs/{id}/apply-profile/{pid}` · `DELETE /api/profiles/{pid}` |
 | 서비스 헬스체크 | `GET /health` |
 
+`POST /api/jobs/{id}/selection`의 `sam3_mode`는 `normal` 또는 `precision`을 받습니다.
+`normal`은 기본 보통 모드로 3프레임 간격 segmentation 후 중간 프레임을 보간하고,
+`precision`은 정밀 모드로 모든 프레임을 segmentation합니다.
+
 ---
 
 ## 환경변수
@@ -219,6 +223,7 @@ cd frontend && npm run dev
 | `SCENE_ANALYSIS_FRAMES` | `5` | GPT-4o 씬 분석 프레임 수 (병렬 투표) |
 | `FACE_SIMILARITY_THRESHOLD` | `0.55` | 동일인 판정 임계값 |
 | `SAM3_CONFIDENCE_THRESHOLD` | `0.3` | SAM3 탐지 신뢰도 임계값 |
+| `SAM3_MODE` | `normal` | 기본 SAM3 마스킹 모드. `normal`=3프레임 간격 segmentation+보간, `precision`=모든 프레임 segmentation |
 | `DEBUG_MASK_OVERLAY` | `false` | 테스트 확인용 컬러 마스크 오버레이 적용 여부 |
 | `UPLOAD_DIR` / `OUTPUT_DIR` | `uploads` / `outputs` | 저장 경로 |
 | `SAM3_CHECKPOINT` | `checkpoints/sam3.pt` | SAM3 가중치 경로 |

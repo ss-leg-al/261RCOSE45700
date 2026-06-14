@@ -53,6 +53,7 @@ class JobStore:
     protected_face_cluster_ids: list[int] = field(default_factory=list)
     masked_pii_types: list[str] = field(default_factory=list)
     masked_pii_object_ids: list[int] = field(default_factory=list)
+    sam3_mode: str | None = None
 
     # Guideline (generated after Phase 1)
     guideline: list[dict] = field(default_factory=list)
