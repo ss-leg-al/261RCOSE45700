@@ -15,8 +15,9 @@ const SCENE_LABEL = {
   meeting: "회의", lecture: "강의", interview: "인터뷰", public: "공공", vehicle: "자동차", other: "기타",
 };
 
-export default function Sidebar({ activeJobId, activeStep, onSelectJob, onNewJob }) {
+export default function Sidebar({ activeJobId, activeStep, onSelectJob, onNewJob, onDeleteJob }) {
   const [jobs, setJobs] = useState([]);
+  const [deletingId, setDeletingId] = useState(null);
   const inputRef = useRef();
 
   useEffect(() => {
@@ -31,6 +32,25 @@ export default function Sidebar({ activeJobId, activeStep, onSelectJob, onNewJob
     const t = setInterval(poll, 2000);
     return () => { alive = false; clearInterval(t); };
   }, []);
+
+  async function handleDelete(job) {
+    const ok = window.confirm(
+      `${job.job_id.slice(0, 8)} 작업을 삭제하시겠습니까?\n` +
+      `DB와 저장된 영상/프레임이 모두 영구 삭제됩니다.`
+    );
+    if (!ok) return;
+    setDeletingId(job.job_id);
+    try {
+      await api.deleteJob(job.job_id);
+      setJobs((prev) => prev.filter((j) => j.job_id !== job.job_id));
+      if (job.job_id === activeJobId) onDeleteJob?.(job.job_id);
+    } catch (err) {
+      const detail = err?.response?.data?.detail ?? "삭제에 실패했습니다.";
+      window.alert(detail);
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const active  = jobs.filter((j) => !["done", "failed"].includes(j.status));
   const done    = jobs.filter((j) => j.status === "done");
@@ -92,13 +112,16 @@ export default function Sidebar({ activeJobId, activeStep, onSelectJob, onNewJob
         )}
 
         {active.length > 0 && (
-          <JobGroup label="진행 중" jobs={active} activeJobId={activeJobId} onSelect={onSelectJob} />
+          <JobGroup label="진행 중" jobs={active} activeJobId={activeJobId}
+            onSelect={onSelectJob} onDelete={handleDelete} deletingId={deletingId} />
         )}
         {done.length > 0 && (
-          <JobGroup label="완료" jobs={done} activeJobId={activeJobId} onSelect={onSelectJob} />
+          <JobGroup label="완료" jobs={done} activeJobId={activeJobId}
+            onSelect={onSelectJob} onDelete={handleDelete} deletingId={deletingId} />
         )}
         {failed.length > 0 && (
-          <JobGroup label="오류" jobs={failed} activeJobId={activeJobId} onSelect={onSelectJob} />
+          <JobGroup label="오류" jobs={failed} activeJobId={activeJobId}
+            onSelect={onSelectJob} onDelete={handleDelete} deletingId={deletingId} />
         )}
       </div>
 
@@ -112,7 +135,7 @@ export default function Sidebar({ activeJobId, activeStep, onSelectJob, onNewJob
   );
 }
 
-function JobGroup({ label, jobs, activeJobId, onSelect }) {
+function JobGroup({ label, jobs, activeJobId, onSelect, onDelete, deletingId }) {
   return (
     <div>
       <p
@@ -123,72 +146,123 @@ function JobGroup({ label, jobs, activeJobId, onSelect }) {
       </p>
       <div className="space-y-1">
         {jobs.map((job) => (
-          <JobItem key={job.job_id} job={job} isActive={job.job_id === activeJobId} onSelect={onSelect} />
+          <JobItem
+            key={job.job_id}
+            job={job}
+            isActive={job.job_id === activeJobId}
+            onSelect={onSelect}
+            onDelete={onDelete}
+            isDeleting={deletingId === job.job_id}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function JobItem({ job, isActive, onSelect }) {
+const IN_PROGRESS_STATUSES = ["detecting", "generating_guideline", "masking"];
+
+function JobItem({ job, isActive, onSelect, onDelete, isDeleting }) {
   const meta = STATUS_META[job.status] ?? STATUS_META.pending;
   const clickable = ["awaiting_selection", "done", "detecting", "masking", "generating_guideline"].includes(job.status);
+  const deletable = !IN_PROGRESS_STATUSES.includes(job.status) && !isDeleting;
+  const [hovered, setHovered] = useState(false);
 
   return (
-    <button
-      onClick={() => clickable && onSelect(job)}
-      disabled={!clickable}
-      className="w-full text-left rounded-xl px-3 py-2.5 transition-all animate-slide-in-left"
-      style={isActive ? {
-        background: "linear-gradient(var(--card), var(--card)) padding-box, linear-gradient(135deg, #7c3aed, #3b82f6, #06b6d4) border-box",
-        border: "1px solid transparent",
-      } : {
-        background: "transparent",
-        border: "1px solid transparent",
-      }}
-      onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "rgba(255,255,255,0.03)"; }}
-      onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+    <div
+      className="group relative animate-slide-in-left"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
-      <div className="flex items-center gap-2.5">
-        {/* Status dot */}
-        <span
-          className={`w-2 h-2 rounded-full flex-shrink-0 ${meta.pulse ? "animate-glow-pulse" : ""}`}
-          style={{ background: meta.dot, boxShadow: meta.pulse ? `0 0 6px ${meta.dot}` : "none" }}
-        />
+      <button
+        onClick={() => clickable && onSelect(job)}
+        disabled={!clickable}
+        className="w-full text-left rounded-xl px-3 py-2.5 transition-all"
+        style={isActive ? {
+          background: "linear-gradient(var(--card), var(--card)) padding-box, linear-gradient(135deg, #7c3aed, #3b82f6, #06b6d4) border-box",
+          border: "1px solid transparent",
+        } : {
+          background: hovered ? "rgba(255,255,255,0.03)" : "transparent",
+          border: "1px solid transparent",
+        }}
+      >
+        <div className="flex items-center gap-2.5">
+          {/* Status dot */}
+          <span
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${meta.pulse ? "animate-glow-pulse" : ""}`}
+            style={{ background: meta.dot, boxShadow: meta.pulse ? `0 0 6px ${meta.dot}` : "none" }}
+          />
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-1">
-            <span
-              className="font-mono text-xs truncate"
-              style={{ color: isActive ? "var(--text)" : "rgba(221,221,245,0.7)" }}
-            >
-              {job.job_id.slice(0, 8)}
-            </span>
-            {job.scene_type && (
-              <span className="text-[10px] flex-shrink-0" style={{ color: "var(--muted)" }}>
-                {SCENE_LABEL[job.scene_type] ?? job.scene_type}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-1">
+              <span
+                className="font-mono text-xs truncate"
+                style={{ color: isActive ? "var(--text)" : "rgba(221,221,245,0.7)" }}
+              >
+                {job.job_id.slice(0, 8)}
               </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-[10px] font-medium" style={{ color: meta.dot }}>
-              {meta.label}
-            </span>
-            {(job.face_count > 0 || job.pii_count > 0) && (
-              <span className="text-[10px]" style={{ color: "var(--muted)" }}>
-                {[
-                  job.face_count > 0 && `👤 ${job.face_count}`,
-                  job.pii_count > 0  && `🔒 ${job.pii_count}`,
-                ].filter(Boolean).join("  ")}
+              {job.scene_type && (
+                <span className="text-[10px] flex-shrink-0" style={{ color: "var(--muted)" }}>
+                  {SCENE_LABEL[job.scene_type] ?? job.scene_type}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-[10px] font-medium" style={{ color: meta.dot }}>
+                {meta.label}
               </span>
-            )}
+              {(job.face_count > 0 || job.pii_count > 0) && (
+                <span className="text-[10px]" style={{ color: "var(--muted)" }}>
+                  {[
+                    job.face_count > 0 && `👤 ${job.face_count}`,
+                    job.pii_count > 0  && `🔒 ${job.pii_count}`,
+                  ].filter(Boolean).join("  ")}
+                </span>
+              )}
+            </div>
           </div>
+
+          {job.status === "awaiting_selection" && !hovered && (
+            <span className="text-[10px] font-bold flex-shrink-0" style={{ color: "#f59e0b" }}>→</span>
+          )}
         </div>
+      </button>
 
-        {job.status === "awaiting_selection" && (
-          <span className="text-[10px] font-bold flex-shrink-0" style={{ color: "#f59e0b" }}>→</span>
-        )}
-      </div>
-    </button>
+      {hovered && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (deletable) onDelete?.(job);
+          }}
+          disabled={!deletable}
+          title={
+            deletable
+              ? "작업 삭제 (DB · 영상 파일 모두)"
+              : isDeleting
+                ? "삭제 중..."
+                : "진행 중인 작업은 삭제할 수 없습니다"
+          }
+          className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md p-1 transition-colors"
+          style={{
+            background: "rgba(0,0,0,0.4)",
+            color: deletable ? "#f87171" : "rgba(221,221,245,0.3)",
+            cursor: deletable ? "pointer" : "not-allowed",
+          }}
+          onMouseEnter={(e) => {
+            if (deletable) e.currentTarget.style.background = "rgba(239,68,68,0.2)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "rgba(0,0,0,0.4)";
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <path d="M10 11v6M14 11v6" />
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+          </svg>
+        </button>
+      )}
+    </div>
   );
 }

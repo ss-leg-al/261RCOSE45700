@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "uploads"
     OUTPUT_DIR: str = "outputs"
     SAM3_CHECKPOINT: str = "checkpoints/sam3.pt"
+    DATABASE_URL: str = "postgresql+psycopg://safer:safer_local_dev@localhost:5432/safer"
 
     @property
     def upload_path(self) -> Path:

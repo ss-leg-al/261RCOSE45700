@@ -9,6 +9,8 @@ opencv-contrib-python==4.10.0.84
 numpy<2
 Pillow
 pydantic-settings
+sqlalchemy>=2.0
+psycopg[binary]
 torch
 torchvision
 

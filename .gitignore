@@ -61,3 +61,6 @@ profiles/
 
 # Local-only benchmark/test code
 local_benchmarks/
+
+# Local-only docs
+docs/presentation_slides.md

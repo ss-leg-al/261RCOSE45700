@@ -12,7 +12,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .job_store import FaceCluster, PIICandidate, get_store
+from .job_store import FaceCluster, PIICandidate, get_store, save_store
 from .log_emitter import emit_log, write_status
 from .report_builder import build_final_report, build_intermediate_scene_analysis, write_report
 from .tools.face_engine import (
@@ -62,6 +62,7 @@ def run_detection_phase(job_id: str) -> None:
     store = get_store(job_id)
     store.status = "detecting"
     write_status(job_id, "detecting")
+    save_store(job_id)
 
     try:
         # 1. Extract frames at SAMPLE_FPS for detection only
@@ -244,6 +245,7 @@ def run_detection_phase(job_id: str) -> None:
         # Generate guideline before handing off to user
         store.status = "generating_guideline"
         write_status(job_id, "generating_guideline")
+        save_store(job_id)
         emit_log(job_id, {"step": "guideline", "message": "편집 가이드라인 생성 중..."})
         guideline = generate_guideline(
             scene_type=store.scene_type or "other",
@@ -274,12 +276,14 @@ def run_detection_phase(job_id: str) -> None:
 
         store.status = "awaiting_selection"
         write_status(job_id, "awaiting_selection")
+        save_store(job_id)
         emit_log(job_id, {"step": "ready", "message": "인물/PII 선택을 기다리고 있습니다"})
 
     except Exception as exc:
         store.status = "failed"
         store.error = str(exc)
         write_status(job_id, "failed", str(exc))
+        save_store(job_id)
         emit_log(job_id, {"step": "error", "message": str(exc)})
 
 
@@ -443,6 +447,7 @@ def run_masking_phase(job_id: str) -> None:
     store = get_store(job_id)
     store.status = "masking"
     write_status(job_id, "masking")
+    save_store(job_id)
 
     try:
         # Extract all frames at native fps for full-quality output.
@@ -586,12 +591,14 @@ def run_masking_phase(job_id: str) -> None:
 
         store.status = "done"
         write_status(job_id, "done")
+        save_store(job_id)
         emit_log(job_id, {"event": "done", "message": "처리 완료! 영상을 다운로드하세요."})
 
     except Exception as exc:
         store.status = "failed"
         store.error = str(exc)
         write_status(job_id, "failed", str(exc))
+        save_store(job_id)
         emit_log(job_id, {"step": "error", "message": str(exc)})
 
 

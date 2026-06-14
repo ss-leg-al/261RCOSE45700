@@ -13,6 +13,10 @@ export const api = {
     return (await http.post("/api/jobs", form)).data;
   },
 
+  async deleteJob(jobId) {
+    await http.delete(`/api/jobs/${jobId}`);
+  },
+
   async getStatus(jobId) {
     return (await http.get(`/api/jobs/${jobId}/status`)).data;
   },

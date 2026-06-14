@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
+import shutil
 import uuid
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 import numpy as np
 
-from .agent.job_store import get_store, list_stores
+from .agent.job_store import get_store, list_stores, reset_store, save_store
 from .agent.pipeline import run_detection_phase, run_masking_phase
 from .agent.profile_store import delete_profile, get_profile, list_profiles, save_profile
 from .agent.report_builder import build_final_report, write_report
@@ -47,6 +48,8 @@ app.mount("/thumbnails", StaticFiles(directory=str(settings.upload_path)), name=
 
 @app.on_event("startup")
 async def startup():
+    from .db.session import init_db
+    init_db()
     load_sam3(settings.SAM3_CHECKPOINT)
 
 
@@ -73,6 +76,36 @@ def list_jobs():
     ]
 
 
+_IN_PROGRESS_STATUSES = {"detecting", "generating_guideline", "masking"}
+
+
+@app.delete("/api/jobs/{job_id}", status_code=204)
+def delete_job(job_id: str):
+    from .db.models import Job
+    from .db.session import SessionLocal
+
+    store = get_store(job_id)
+    if store.status in _IN_PROGRESS_STATUSES:
+        raise HTTPException(
+            409,
+            f"진행 중인 작업({store.status})은 삭제할 수 없습니다. 완료를 기다려주세요.",
+        )
+
+    with SessionLocal() as session:
+        row = session.get(Job, job_id)
+        if row is None:
+            raise HTTPException(404, "작업을 찾을 수 없습니다")
+        session.delete(row)
+        session.commit()
+
+    reset_store(job_id)
+
+    for base in (settings.upload_path, settings.output_path):
+        target = base / job_id
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+
+
 @app.post("/api/jobs", response_model=JobCreated)
 async def create_job(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     content = await file.read()
@@ -89,6 +122,7 @@ async def create_job(background_tasks: BackgroundTasks, file: UploadFile = File(
 
     store = get_store(job_id)
     store.video_path = str(video_path)
+    save_store(job_id)
 
     background_tasks.add_task(run_detection_phase, job_id)
     return JobCreated(job_id=job_id)
@@ -166,6 +200,7 @@ def skip_job(job_id: str):
     write_report(store.report, store.video_path)
     store.status = "done"
     write_status(job_id, "done")
+    save_store(job_id)
     return {"message": "편집 없이 완료"}
 
 
@@ -185,6 +220,7 @@ def submit_selection(
         store.sam3_mode = normalize_sam3_mode(body.sam3_mode or settings.SAM3_MODE)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    save_store(job_id)
     background_tasks.add_task(run_masking_phase, job_id)
     return {"message": "마스킹을 시작합니다"}
 

@@ -86,6 +86,10 @@ export default function App() {
     await api.submitSelection(state.jobId, protectedFaceIds, maskedPiiTypes, maskedPiiObjectIds, sam3Mode);
   }
 
+  function handleDeleteJob(deletedJobId) {
+    if (state.jobId === deletedJobId) setState(INITIAL);
+  }
+
   const { step, jobId, candidates, guideline, error } = state;
   const isProcessing = ["detecting", "generating_guideline", "masking"].includes(step);
 
@@ -97,6 +101,7 @@ export default function App() {
         activeStep={step}
         onSelectJob={handleSelectJob}
         onNewJob={handleNewJob}
+        onDeleteJob={handleDeleteJob}
       />
 
       {/* Center panel */}
